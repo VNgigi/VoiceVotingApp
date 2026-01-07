@@ -4,16 +4,16 @@ import { useRouter } from "expo-router";
 import { addDoc, collection } from "firebase/firestore";
 import React, { useState } from "react";
 import {
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
 import { db } from "../../firebaseConfig";
 
@@ -45,24 +45,37 @@ export default function CandidateApplication() {
   };
 
   const handleSubmit = async () => {
-    if (!name || !position || !admissionNumber || !email || !photoUri) {
-      Alert.alert("Missing Fields", "Please fill all required fields and upload a photo.");
+    // 1. Updated Validation: Check ALL fields including briefInfo, course, and age
+    if (
+      !name.trim() || 
+      !position || 
+      !admissionNumber.trim() || 
+      !course.trim() || 
+      !age.trim() || 
+      !briefInfo.trim() || 
+      !email.trim() || 
+      !photoUri
+    ) {
+      Alert.alert(
+        "Missing Information", 
+        "Please fill in ALL fields (including Course, Age, and Manifesto) and upload a photo."
+      );
       return;
     }
 
     setLoading(true);
     try {
-      // Save to 'applications' collection (NOT 'contestants')
+      // Save to 'applications' collection
       await addDoc(collection(db, "applications"), {
-        name,
+        name: name.trim(),
         position,
-        admissionNumber,
-        course,
-        age,
-        briefInfo,
-        email,
+        admissionNumber: admissionNumber.trim(),
+        course: course.trim(),
+        age: age.trim(),
+        briefInfo: briefInfo.trim(),
+        email: email.trim(),
         photoUri,
-        status: "pending", // Mark as pending
+        status: "pending",
         submittedAt: new Date().toISOString()
       });
 

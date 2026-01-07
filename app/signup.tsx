@@ -1,10 +1,9 @@
 import { useRouter } from "expo-router";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore"; // Import Firestore functions
+import { doc, setDoc } from "firebase/firestore";
 import React, { useState } from "react";
 import {
   Alert,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -12,15 +11,15 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
+  View
 } from "react-native";
-import { auth, db } from "../firebaseConfig"; // Ensure 'db' is exported from your config
+import { auth, db } from "../firebaseConfig";
 
 export default function Signup() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [regNumber, setRegNumber] = useState(""); // New State
-  const [department, setDepartment] = useState(""); // New State
+  const [regNumber, setRegNumber] = useState("");
+  const [department, setDepartment] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -34,28 +33,26 @@ export default function Signup() {
 
     setLoading(true);
     try {
-      // 1. Create User in Authentication
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 2. Update Basic Profile (Name)
       await updateProfile(user, { displayName: fullName });
 
-      // 3. Save Extra Details (Reg No, Dept) to Firestore
-      // We use the User ID (uid) as the document name so it's easy to find later
       await setDoc(doc(db, "users", user.uid), {
         fullName,
         email,
         regNumber,
         department,
-        role: "student", // Default role
+        role: "student",
         createdAt: new Date().toISOString(),
       });
 
       Alert.alert("Success", "Account created successfully!");
       router.replace("/home");
+      
     } catch (error: any) {
-      Alert.alert("Signup Error", error.message);
+      const errorMessage = error.message || "Something went wrong";
+      Alert.alert("Signup Error", errorMessage);
     } finally {
       setLoading(false);
     }
@@ -65,13 +62,16 @@ export default function Signup() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContainer}
-          keyboardShouldPersistTaps="handled"
-        >
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
+        // FIX 1: "handled" ensures taps pass through to the inputs
+        keyboardShouldPersistTaps="handled" 
+        // FIX 2: "on-drag" dismisses keyboard when user swipes down (optional but nice)
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.innerContainer}>
           <Text style={styles.title}>Create an Account</Text>
 
           <TextInput
@@ -79,6 +79,7 @@ export default function Signup() {
             placeholder="Full Name"
             value={fullName}
             onChangeText={setFullName}
+            placeholderTextColor="#888"
           />
 
           <TextInput
@@ -86,7 +87,8 @@ export default function Signup() {
             placeholder="Registration Number"
             value={regNumber}
             onChangeText={setRegNumber}
-            autoCapitalize="characters" // Auto-caps for Reg No
+            autoCapitalize="characters"
+            placeholderTextColor="#888"
           />
 
           <TextInput
@@ -94,6 +96,7 @@ export default function Signup() {
             placeholder="Department"
             value={department}
             onChangeText={setDepartment}
+            placeholderTextColor="#888"
           />
 
           <TextInput
@@ -103,6 +106,7 @@ export default function Signup() {
             autoCapitalize="none"
             value={email}
             onChangeText={setEmail}
+            placeholderTextColor="#888"
           />
 
           <TextInput
@@ -111,6 +115,7 @@ export default function Signup() {
             secureTextEntry
             value={password}
             onChangeText={setPassword}
+            placeholderTextColor="#888"
           />
 
           <TouchableOpacity
@@ -123,11 +128,11 @@ export default function Signup() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => router.push("/login")}>
+          <TouchableOpacity onPress={() => router.push("/login")} style={styles.linkContainer}>
             <Text style={styles.linkText}>Already have an account? Log in</Text>
           </TouchableOpacity>
-        </ScrollView>
-      </TouchableWithoutFeedback>
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -140,13 +145,17 @@ const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
     justifyContent: "center",
+  },
+  innerContainer: {
     alignItems: "center",
     padding: 20,
+    width: "100%",
   },
   title: {
     fontSize: 26,
     fontWeight: "bold",
     marginBottom: 30,
+    color: "#333",
   },
   input: {
     width: "100%",
@@ -157,6 +166,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     borderWidth: 1,
     borderColor: "#ccc",
+    color: "#333",
   },
   button: {
     backgroundColor: "#007AFF",
@@ -172,8 +182,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  linkText: {
+  linkContainer: {
     marginTop: 15,
+    padding: 10,
+  },
+  linkText: {
     color: "#007AFF",
     fontSize: 15,
   },

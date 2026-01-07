@@ -57,11 +57,23 @@
         {
           "photosPermission": "The app accesses your photos to let you upload candidate images."
         }
+      ],
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "Allow VoiceVotingApp to access your microphone."
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "52132816-86bc-4ff5-989c-fafba5dca2dc"
+      }
     }
   }
 }
