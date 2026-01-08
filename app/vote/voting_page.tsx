@@ -24,7 +24,8 @@ import { db } from "../../firebaseConfig";
 interface Candidate {
   id: string;
   name: string;
-  photoUri?: string;
+  photoUrl?: string; 
+  photoUri?: string; 
   briefInfo?: string; 
   [key: string]: any;
 }
@@ -49,7 +50,6 @@ export default function VotingScreen() {
   const [step, setStep] = useState<"selecting" | "confirming">("selecting");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Animation Value for the "Listening" Pulse
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // --- REFS ---
@@ -64,7 +64,7 @@ export default function VotingScreen() {
   useEffect(() => { stepRef.current = step; }, [step]);
   useEffect(() => { selectedRef.current = selectedCandidate; }, [selectedCandidate]);
 
-  // --- ANIMATION LOOP ---
+  // --- ANIMATION ---
   useEffect(() => {
     if (listening) {
       Animated.loop(
@@ -74,13 +74,12 @@ export default function VotingScreen() {
         ])
       ).start();
     } else {
-      pulseAnim.setValue(1); // Reset
+      pulseAnim.setValue(1);
     }
   }, [listening]);
 
-  // --- 1. SETUP & FETCH DATA ---
+  // --- 1. SETUP ---
   useEffect(() => {
-    // A. Request Permissions Immediately
     const requestPerms = async () => {
         if (Platform.OS === 'android') {
             await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
@@ -88,17 +87,14 @@ export default function VotingScreen() {
     };
     requestPerms();
 
-    // B. Fetch Data
     const fetchData = async () => {
       try {
         const q = query(collection(db, "contestants"));
         const snapshot = await getDocs(q);
         const rawList: Candidate[] = [];
-        
         snapshot.forEach((doc) => {
            rawList.push({ id: doc.id, ...doc.data() } as Candidate);
         });
-
         const grouped = groupCandidates(rawList);
         setPositionsData(grouped);
       } catch (e) {
@@ -110,21 +106,12 @@ export default function VotingScreen() {
     };
     fetchData();
 
-    // C. Cleanup Voice on Unmount
     return () => {
-        // Safe Cleanup
-        if (Voice) {
-            try {
-                Voice.destroy().then(Voice.removeAllListeners);
-            } catch (e) {
-                console.log("Cleanup error:", e);
-            }
-        }
+        if (Voice) { try { Voice.destroy().then(Voice.removeAllListeners); } catch (e) {} }
         Speech.stop();
     };
   }, []);
 
-  // Helper: Group Data
   const groupCandidates = (list: Candidate[]) => {
     const order = [
       "President", "Vice President", "Secretary General", 
@@ -142,46 +129,28 @@ export default function VotingScreen() {
       .map(pos => ({ position: pos, candidates: groups[pos] }));
   };
 
-  // --- 2. VOICE EVENT LISTENERS (WITH SAFETY CHECK) ---
+  // --- 2. VOICE EVENT LISTENERS ---
   useEffect(() => {
-    // --- SAFETY CHECK START ---
-    console.log("Voice Module Status:", Voice); 
-
     if (Voice === null || Voice === undefined) {
       setErrorMessage("Voice Library Missing");
-      Alert.alert(
-        "Critical Error", 
-        "The Voice Library is missing from this device.\n\nAre you using Expo Go? This feature does NOT work in Expo Go. You must use a Development Build."
-      );
       return;
     }
-    // --- SAFETY CHECK END ---
-
-    // Define Listeners
-    const onSpeechStart = (e: any) => setListening(true);
-    const onSpeechEnd = (e: any) => setListening(false);
-    const onSpeechError = (e: any) => {
-        console.log("Voice Error:", e);
-        setListening(false);
-    };
     const onSpeechResults = (e: any) => {
         const text = e.value?.[0] || "";
         setRecognizedText(text);
         processVoiceLogic(text);
     };
-
-    // Safely Attach Listeners
     try {
-        Voice.onSpeechStart = onSpeechStart;
-        Voice.onSpeechEnd = onSpeechEnd;
-        Voice.onSpeechError = onSpeechError;
+        Voice.onSpeechStart = () => setListening(true);
+        Voice.onSpeechEnd = () => setListening(false);
+        Voice.onSpeechError = (e) => { console.log(e); setListening(false); };
         Voice.onSpeechResults = onSpeechResults;
     } catch (e) {
-        console.error("Setup Error: Could not attach listeners", e);
+        console.error("Setup Error", e);
     }
   }, []);
 
-  // --- 3. AUTO-PROMPT LOGIC ---
+  // --- 3. AUTO-PROMPT ---
   useEffect(() => {
     if (!loading && positionsData.length > 0) {
       speakPromptAndListen();
@@ -191,38 +160,29 @@ export default function VotingScreen() {
   const speakPromptAndListen = () => {
     Speech.stop();
     stopListening(); 
-
     const currentPos = positionsData[currentIndex];
     if (!currentPos) return;
 
-    let prompt = "";
     if (step === "selecting") {
         const names = currentPos.candidates.map(c => c.name).join(", ");
-        prompt = `Voting for ${currentPos.position}. Candidates are: ${names}. Say a name.`;
-    } else {
-        return; 
+        const prompt = `Voting for ${currentPos.position}. Candidates are: ${names}. Say a name, or say Skip.`;
+        
+        Speech.speak(prompt, {
+            // FIXED: Added curly braces to return void
+            onDone: () => { setTimeout(() => startListening(), 500); },
+            onError: () => console.log("Speech Error")
+        });
     }
-
-    Speech.speak(prompt, {
-        onDone: () => {
-            setTimeout(() => startListening(), 500); 
-        },
-        onError: () => console.log("Speech Error")
-    });
   };
 
-  // --- 4. LISTENING FUNCTIONS ---
   const startListening = async () => {
     setErrorMessage("");
     if (!Voice) return;
-
     try {
       await Voice.stop(); 
       setRecognizedText(""); 
       await Voice.start("en-US");
-    } catch (e: any) {
-      console.error(e);
-    }
+    } catch (e: any) { console.error(e); }
   };
 
   const stopListening = async () => {
@@ -230,17 +190,23 @@ export default function VotingScreen() {
     try { await Voice.stop(); } catch (e) {}
   };
 
-  // --- 5. LOGIC PROCESSING ---
+  // --- 4. LOGIC PROCESSING ---
   const processVoiceLogic = (text: string) => {
     const clean = text.toLowerCase().trim();
     const currentStep = stepRef.current;
     const currentPos = positionsRef.current[indexRef.current];
 
     if (!currentPos) return;
-
     stopListening();
 
     if (currentStep === "selecting") {
+      // 1. Check for Skip Command
+      if (clean.includes("skip") || clean.includes("next") || clean.includes("pass")) {
+        handleSkip();
+        return;
+      }
+
+      // 2. Check for Name Match
       const match = currentPos.candidates.find(c => 
         c.name.toLowerCase().includes(clean) || clean.includes(c.name.toLowerCase())
       );
@@ -248,36 +214,52 @@ export default function VotingScreen() {
       if (match) {
         handleSelectCandidate(match);
       } else {
-        Speech.speak("I didn't catch that name. Please say it again.", {
-            onDone: () => {
-                setTimeout(() => startListening(), 500);
-            }
+        Speech.speak("I didn't catch that. Say a name, or say Skip.", {
+            // FIXED: Added curly braces
+            onDone: () => { setTimeout(() => startListening(), 500); }
         });
       }
 
     } else if (currentStep === "confirming") {
       if (clean.includes("confirm") || clean.includes("yes") || clean.includes("submit")) {
         submitVote();
-      } else if (clean.includes("cancel") || clean.includes("no") || clean.includes("change")) {
+      } else if (clean.includes("cancel") || clean.includes("no")) {
         cancelSelection();
       } else {
         Speech.speak("Please say Confirm or Cancel.", {
-            onDone: () => {
-                setTimeout(() => startListening(), 500);
-            }
+            // FIXED: Added curly braces
+            onDone: () => { setTimeout(() => startListening(), 500); }
         });
       }
+    }
+  };
+
+  // --- 5. ACTION HANDLERS ---
+  const handleSkip = () => {
+    stopListening();
+    Speech.speak("Skipping position.", {
+      onDone: () => moveToNextPosition()
+    });
+  };
+
+  const moveToNextPosition = () => {
+    if (indexRef.current < positionsRef.current.length - 1) {
+      setSelectedCandidate(null);
+      setRecognizedText("");
+      setStep("selecting");
+      setCurrentIndex(prev => prev + 1);
+    } else {
+      Speech.speak("All voting complete. Submitting results.");
+      router.replace("/results");
     }
   };
 
   const handleSelectCandidate = (candidate: Candidate) => {
     setSelectedCandidate(candidate);
     setStep("confirming");
-    
-    Speech.speak(`You selected ${candidate.name}. Say Confirm to vote, or Cancel.`, {
-        onDone: () => {
-            setTimeout(() => startListening(), 500);
-        }
+    Speech.speak(`Selected ${candidate.name}. Say Confirm or Cancel.`, {
+        // FIXED: Added curly braces
+        onDone: () => { setTimeout(() => startListening(), 500); }
     });
   };
 
@@ -285,55 +267,38 @@ export default function VotingScreen() {
     setSelectedCandidate(null);
     setStep("selecting");
     setRecognizedText("");
-    
-    Speech.speak("Selection cleared. Say a candidate name.", {
-        onDone: () => {
-            setTimeout(() => startListening(), 500);
-        }
+    Speech.speak("Selection cleared. Say a name or Skip.", {
+        // FIXED: Added curly braces
+        onDone: () => { setTimeout(() => startListening(), 500); }
     });
   };
 
   const submitVote = async () => {
     const candidate = selectedRef.current;
     const currentPos = positionsRef.current[indexRef.current];
-    
     if (!candidate || !currentPos) return;
 
     try {
       const voteRef = doc(db, "votes", currentPos.position);
       await setDoc(voteRef, { [candidate.name]: increment(1) }, { merge: true });
-
-      Speech.speak(`Vote for ${candidate.name} confirmed.`);
-
-      if (indexRef.current < positionsRef.current.length - 1) {
-        setTimeout(() => {
-          setSelectedCandidate(null);
-          setRecognizedText("");
-          setStep("selecting");
-          setCurrentIndex(prev => prev + 1);
-        }, 2000);
-      } else {
-        Speech.speak("All votes cast. Thank you.");
-        router.replace("/results");
-      }
-
+      Speech.speak(`Vote recorded.`);
+      moveToNextPosition();
     } catch (e) {
       console.error(e);
-      Speech.speak("Error recording vote. Please try again.");
+      Speech.speak("Error recording vote. Try again.");
     }
   };
 
 
   // --- RENDER ---
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#eaeff4ff"/></View>;
-  if (positionsData.length === 0) return <View style={styles.center}><Text>No elections found. Check your Internet connection</Text></View>;
+  if (positionsData.length === 0) return <View style={styles.center}><Text>No elections active.</Text></View>;
 
   const currentPosition = positionsData[currentIndex];
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Voice Vote</Text>
         <Text style={styles.stepIndicator}>
@@ -347,6 +312,10 @@ export default function VotingScreen() {
         <View style={styles.grid}>
           {currentPosition.candidates.map((candidate) => {
             const isSelected = selectedCandidate?.id === candidate.id;
+            const imageSource = (candidate.photoUrl || candidate.photoUri)
+              ? { uri: candidate.photoUrl || candidate.photoUri }
+              : { uri: `https://ui-avatars.com/api/?name=${candidate.name}&background=random&size=128` };
+
             return (
               <TouchableOpacity
                 key={candidate.id}
@@ -354,59 +323,41 @@ export default function VotingScreen() {
                 onPress={() => handleSelectCandidate(candidate)} 
                 activeOpacity={0.8}
               >
-                <Image
-                  source={{ 
-                    uri: candidate.photoUri && !candidate.photoUri.startsWith('blob') 
-                      ? candidate.photoUri 
-                      : `https://ui-avatars.com/api/?name=${candidate.name}&background=random&size=128` 
-                  }}
-                  style={styles.avatar}
-                />
+                <Image source={imageSource} style={styles.avatar} resizeMode="cover" />
                 <View style={styles.cardInfo}>
-                  <Text style={[styles.name, isSelected && styles.nameSelected]}>
-                    {candidate.name}
-                  </Text>
-                  {candidate.briefInfo ? (
-                    <Text style={styles.party}>{candidate.briefInfo}</Text>
-                  ) : null}
+                  <Text style={[styles.name, isSelected && styles.nameSelected]}>{candidate.name}</Text>
+                  {candidate.briefInfo ? <Text style={styles.party} numberOfLines={1}>{candidate.briefInfo}</Text> : null}
                 </View>
-                {isSelected && (
-                  <View style={styles.checkmarkBadge}><Text style={styles.checkmark}>✓</Text></View>
-                )}
+                {isSelected && <View style={styles.checkmarkBadge}><Text style={styles.checkmark}>✓</Text></View>}
               </TouchableOpacity>
             );
           })}
         </View>
 
+        {/* SKIP BUTTON */}
+        {step === "selecting" && (
+           <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
+             <Text style={styles.skipButtonText}>Skip / Abstain ⏭️</Text>
+           </TouchableOpacity>
+        )}
+
         <View style={styles.statusSection}>
             <Animated.View style={[styles.statusCircle, { transform: [{ scale: pulseAnim }] }]}>
                 <Text style={styles.statusIcon}>{listening ? "👂" : "🤖"}</Text>
             </Animated.View>
-
-            <Text style={styles.statusText}>
-                {listening ? "Listening..." : "Processing..."}
-            </Text>
-
-            {recognizedText ? (
-                <Text style={styles.recognizedText}>Heard: "{recognizedText}"</Text>
-            ) : null}
-            
-            {errorMessage ? (
-                <Text style={{color: 'red', marginTop: 10, textAlign: 'center', fontWeight: 'bold'}}>
-                    {errorMessage}
-                </Text>
-            ) : null}
+            <Text style={styles.statusText}>{listening ? "Listening..." : "Processing..."}</Text>
+            {recognizedText ? <Text style={styles.recognizedText}>Heard: "{recognizedText}"</Text> : null}
         </View>
 
         {selectedCandidate && (
           <View style={styles.actionContainer}>
-            <Text style={styles.confirmPrompt}>Confirm vote for {selectedCandidate.name}?</Text>
+            <Text style={styles.confirmPrompt}>Vote for {selectedCandidate.name}?</Text>
             <View style={styles.actionButtons}>
               <TouchableOpacity style={styles.cancelBtn} onPress={cancelSelection}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.confirmBtn} onPress={submitVote}>
-                <Text style={styles.confirmText}>Confirm Vote</Text>
+                <Text style={styles.confirmText}>Confirm</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -425,10 +376,7 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 20, paddingBottom: 50 },
   positionTitle: { fontSize: 22, fontWeight: "bold", color: "#1A4A7A", textAlign: "center", marginBottom: 20, textTransform: "uppercase" },
   grid: { gap: 12 },
-  card: {
-    flexDirection: "row", backgroundColor: "#fff", borderRadius: 16, padding: 12, alignItems: "center",
-    borderWidth: 2, borderColor: "transparent", shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 10, elevation: 2,
-  },
+  card: { flexDirection: "row", backgroundColor: "#fff", borderRadius: 16, padding: 12, alignItems: "center", borderWidth: 2, borderColor: "transparent", elevation: 2 },
   cardSelected: { borderColor: "#007AFF", backgroundColor: "#F0F9FF" },
   avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: "#eee" },
   cardInfo: { marginLeft: 16, flex: 1 },
@@ -437,12 +385,13 @@ const styles = StyleSheet.create({
   party: { fontSize: 14, color: "#666", marginTop: 2 },
   checkmarkBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center", marginLeft: 10 },
   checkmark: { color: "#fff", fontWeight: "bold", fontSize: 14 },
-  statusSection: { marginTop: 40, alignItems: "center", justifyContent: 'center' },
-  statusCircle: {
-    width: 80, height: 80, borderRadius: 40, backgroundColor: "#E3F2FD",
-    justifyContent: "center", alignItems: "center", marginBottom: 15,
-    borderWidth: 1, borderColor: "#2196F3"
-  },
+  
+  // Skip Button Styles
+  skipButton: { marginTop: 20, alignSelf: "center", backgroundColor: "#EDF2F7", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20 },
+  skipButtonText: { color: "#4A5568", fontWeight: "bold", fontSize: 14 },
+
+  statusSection: { marginTop: 30, alignItems: "center", justifyContent: 'center' },
+  statusCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#E3F2FD", justifyContent: "center", alignItems: "center", marginBottom: 15, borderWidth: 1, borderColor: "#2196F3" },
   statusIcon: { fontSize: 32 },
   statusText: { fontSize: 16, fontWeight: "600", color: "#555" },
   recognizedText: { marginTop: 8, fontSize: 16, color: "#333", fontStyle: "italic" },
