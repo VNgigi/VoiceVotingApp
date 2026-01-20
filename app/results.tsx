@@ -1,12 +1,17 @@
+import { useRouter } from "expo-router";
 import * as Speech from "expo-speech";
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import { collection, getDocs } from "firebase/firestore";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Animated,
   FlatList,
   RefreshControl,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View
 } from "react-native";
 import { db } from "../firebaseConfig";
@@ -22,19 +27,41 @@ interface PositionResult {
 }
 
 export default function Results() {
+  const router = useRouter();
+  
+  // --- STATE ---
   const [results, setResults] = useState<PositionResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  
+  // Voice State
+  const [listening, setListening] = useState(false);
+  const [statusText, setStatusText] = useState("Loading...");
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Run only once on mount
+  // --- 1. INITIAL FETCH ---
   useEffect(() => {
     fetchResults();
     
-    // Cleanup: Stop talking if user leaves the screen
+    // Cleanup on unmount
     return () => {
-      Speech.stop();
+      stopEverything();
     };
   }, []);
+
+  // --- ANIMATION ---
+  useEffect(() => {
+    if (listening) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true })
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [listening]);
 
   const fetchResults = async () => {
     try {
@@ -44,33 +71,24 @@ export default function Results() {
       querySnapshot.forEach((doc) => {
         const position = doc.id;
         const data = doc.data();
-
-        // Convert Firestore object to array
         const candidatesArray: CandidateResult[] = Object.entries(data).map(
-          ([name, voteCount]) => ({
-            name,
-            votes: Number(voteCount)
-          })
+          ([name, voteCount]) => ({ name, votes: Number(voteCount) })
         );
-
-        // Sort: Highest votes first
+        // Sort highest votes first
         candidatesArray.sort((a, b) => b.votes - a.votes);
-
-        fetchedData.push({
-          position,
-          candidates: candidatesArray,
-        });
+        fetchedData.push({ position, candidates: candidatesArray });
       });
 
       setResults(fetchedData);
       
-      // --- AUTO-READ LOGIC ---
-      // We pass the data directly to ensure it reads the latest version immediately
-      readResultsAloud(fetchedData);
+      // Notify user we are ready (Don't read full list yet)
+      Speech.speak("Results loaded. Say Read All, or name a position.", {
+          onDone: () => { startListening(); }
+      });
 
     } catch (error) {
       console.error("Error fetching results:", error);
-      Speech.speak("I could not fetch the results. Please check your internet.");
+      setStatusText("Error fetching data.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -79,25 +97,30 @@ export default function Results() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    // Stop speaking previous results if user refreshes
-    Speech.stop(); 
+    stopEverything();
     fetchResults();
   };
 
+  const stopEverything = () => {
+    Speech.stop();
+    ExpoSpeechRecognitionModule.stop();
+    setListening(false);
+  };
+
+  // --- 2. READING LOGIC ---
   const readResultsAloud = (data: PositionResult[]) => {
-    Speech.stop(); // Clear queue
+    stopEverything();
+    setStatusText("Reading Results...");
 
     if (data.length === 0) {
-      Speech.speak("No votes have been cast yet.");
+      Speech.speak("No votes have been cast yet.", { onDone: () => { startListening(); } });
       return;
     }
 
-    Speech.speak("Here are the current election results.");
+    Speech.speak("Here are the full election results.");
 
     data.forEach((item) => {
-      const winner = item.candidates[0]; // First one is winner due to sort
-      
-      // Pause slightly by speaking strictly
+      const winner = item.candidates[0];
       if (winner) {
         Speech.speak(`For ${item.position}, the leader is ${winner.name}, with ${winner.votes} votes.`);
       } else {
@@ -105,7 +128,114 @@ export default function Results() {
       }
     });
 
-    Speech.speak("End of results.");
+    Speech.speak("End of list. Say Read Again, or Go Home.", {
+        onDone: () => { startListening(); }
+    });
+  };
+
+  const readSpecificPosition = (posName: string) => {
+    // Find exact match from our data
+    const target = results.find(r => r.position === posName);
+    
+    if (target) {
+        Speech.speak(`Results for ${target.position}.`);
+        target.candidates.forEach((c) => {
+            Speech.speak(`${c.name} has ${c.votes} votes.`);
+        });
+        Speech.speak("Finished reading the results for that position. Say Read All for the whole results, or specify another position or Go Home to go back", { 
+            onDone: () => { startListening(); } 
+        });
+    } else {
+        Speech.speak("I couldn't find that position.", { 
+            onDone: () => { startListening(); } 
+        });
+    }
+  };
+
+  // --- 3. VOICE LISTENER ---
+  const startListening = async () => {
+    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!result.granted) {
+        Alert.alert("Permission needed", "Please enable microphone access.");
+        return;
+    }
+
+    try {
+        ExpoSpeechRecognitionModule.start({
+            lang: "en-US",
+            interimResults: true,
+            maxAlternatives: 1,
+        });
+        setListening(true);
+        setStatusText("Listening... (Say 'Read President' or 'Go Home')");
+    } catch (e) {
+        console.error("Mic Error", e);
+    }
+  };
+
+  useSpeechRecognitionEvent("result", (event) => {
+    const text = event.results[0]?.transcript;
+    if (text) {
+        if(listening) setStatusText(`Heard: "${text}"`);
+        if (event.isFinal) {
+            handleVoiceCommand(text);
+        }
+    }
+  });
+
+  useSpeechRecognitionEvent("end", () => setListening(false));
+
+  // --- 4. COMMAND HANDLER (SMART MATCHING) ---
+  const handleVoiceCommand = (text: string) => {
+    const cmd = text.toLowerCase();
+    stopEverything(); // Stop listening while processing
+
+    // A. Navigation Commands
+    if (cmd.includes("home") || cmd.includes("back") || cmd.includes("menu")) {
+        Speech.speak("Going home.", {
+            onDone: () => { router.back(); }
+        });
+        return;
+    } 
+    
+    // B. Refresh Commands
+    if (cmd.includes("refresh") || cmd.includes("reload")) {
+        onRefresh();
+        return;
+    }
+
+    // C. Read All Command
+    if (cmd.includes("read all") || cmd.includes("read everything")) {
+        readResultsAloud(results);
+        return;
+    }
+
+    // D. SMART POSITION MATCHING
+    // Find all positions that might match what the user said
+    const matches = results.filter(r => {
+        const positionTitle = r.position.toLowerCase();
+        
+        // 1. Exact phrase match (e.g. user said "Vice President")
+        if (cmd.includes(positionTitle)) return true;
+
+        // 2. Keyword match (e.g. user said "Secretary", position is "Secretary General")
+        const words = positionTitle.split(" ");
+        // Check if any significant word (len > 3) is in the command
+        return words.some(word => word.length > 3 && cmd.includes(word));
+    });
+
+    if (matches.length > 0) {
+        // Sort matches by length (Longest first)
+        // This ensures "Vice President" is picked over just "President" if user said "Vice..."
+        matches.sort((a, b) => b.position.length - a.position.length);
+        
+        // Read the best match
+        readSpecificPosition(matches[0].position);
+    } else {
+        Speech.speak("I didn't catch that. Say Read All, Go Home, or name a position.", {
+            onDone: () => { startListening(); }
+        });
+    }
   };
 
   if (loading) {
@@ -124,8 +254,7 @@ export default function Results() {
       <FlatList
         data={results}
         keyExtractor={(item) => item.position}
-        // This ensures the list pushes up content if it's long
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -138,7 +267,7 @@ export default function Results() {
                 <View key={index} style={styles.row}>
                   <Text style={[
                     styles.candidateName, 
-                    index === 0 && styles.winnerText // Highlight winner in green
+                    index === 0 && styles.winnerText
                   ]}>
                     {index + 1}. {candidate.name} {index === 0 ? "🏆" : ""}
                   </Text>
@@ -150,17 +279,28 @@ export default function Results() {
             )}
           </View>
         )}
-        ListFooterComponent={
-          <Text style={styles.footer}>Pull down to refresh results</Text>
-        }
       />
+
+      {/* --- STATUS FOOTER --- */}
+      <View style={styles.footerBar}>
+          <Text style={styles.footerText}>{statusText}</Text>
+          <TouchableOpacity 
+             onPress={() => listening ? stopEverything() : startListening()}
+             style={styles.micButton}
+          >
+             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <Text style={{ fontSize: 24 }}>{listening ? "🛑" : "🎤"}</Text>
+             </Animated.View>
+          </TouchableOpacity>
+      </View>
+
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, // Crucial for scrolling
+    flex: 1, 
     backgroundColor: "#F4F7FB",
     paddingTop: 50,
     paddingHorizontal: 20,
@@ -227,10 +367,17 @@ const styles = StyleSheet.create({
     color: "#999",
     marginTop: 5,
   },
-  footer: {
-    textAlign: "center",
-    color: "#888",
-    marginVertical: 20,
-    paddingBottom: 20,
+  
+  // Footer Styles
+  footerBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#ccc',
+    padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    elevation: 10
   },
+  footerText: { fontSize: 14, color: '#555', fontStyle: 'italic', flex: 1 },
+  micButton: {
+      width: 50, height: 50, borderRadius: 25, backgroundColor: '#E3F2FD',
+      justifyContent: 'center', alignItems: 'center', marginLeft: 10
+  }
 });

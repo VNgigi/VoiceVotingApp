@@ -5,7 +5,7 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-   apiKey: "AIzaSyB01HKZf0aUGwKmtP5WndAkPnTgyoHDaxs",
+   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
   authDomain: "voicevotingapp-1282.firebaseapp.com",
   projectId: "voicevotingapp-1282",
   storageBucket: "voicevotingapp-1282.firebasestorage.app",

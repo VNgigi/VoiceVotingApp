@@ -1,6 +1,6 @@
-import Voice from "@react-native-voice/voice";
 import { useRouter } from "expo-router";
 import * as Speech from "expo-speech";
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import { collection, doc, getDocs, increment, query, setDoc } from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -8,8 +8,6 @@ import {
   Alert,
   Animated,
   Image,
-  PermissionsAndroid,
-  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -27,6 +25,7 @@ interface Candidate {
   photoUrl?: string; 
   photoUri?: string; 
   briefInfo?: string; 
+  position?: string;
   [key: string]: any;
 }
 
@@ -48,8 +47,7 @@ export default function VotingScreen() {
   const [recognizedText, setRecognizedText] = useState("");
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [step, setStep] = useState<"selecting" | "confirming">("selecting");
-  const [errorMessage, setErrorMessage] = useState("");
-
+  
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // --- REFS ---
@@ -80,12 +78,13 @@ export default function VotingScreen() {
 
   // --- 1. SETUP ---
   useEffect(() => {
-    const requestPerms = async () => {
-        if (Platform.OS === 'android') {
-            await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-        }
+    const setup = async () => {
+      const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!result.granted) {
+        Alert.alert("Permission Denied", "Microphone access is required for voice voting.");
+      }
     };
-    requestPerms();
+    setup();
 
     const fetchData = async () => {
       try {
@@ -107,8 +106,8 @@ export default function VotingScreen() {
     fetchData();
 
     return () => {
-        if (Voice) { try { Voice.destroy().then(Voice.removeAllListeners); } catch (e) {} }
         Speech.stop();
+        ExpoSpeechRecognitionModule.stop();
     };
   }, []);
 
@@ -124,31 +123,31 @@ export default function VotingScreen() {
       if (!groups[pos]) groups[pos] = [];
       groups[pos].push(c);
     });
-    return order
+    
+    const result = order
       .filter(pos => groups[pos] && groups[pos].length > 0)
       .map(pos => ({ position: pos, candidates: groups[pos] }));
+      
+    Object.keys(groups).forEach(k => {
+        if(!order.includes(k)) result.push({ position: k, candidates: groups[k] });
+    });
+    
+    return result;
   };
 
-  // --- 2. VOICE EVENT LISTENERS ---
-  useEffect(() => {
-    if (Voice === null || Voice === undefined) {
-      setErrorMessage("Voice Library Missing");
-      return;
-    }
-    const onSpeechResults = (e: any) => {
-        const text = e.value?.[0] || "";
+  // --- 2. VOICE LISTENER ---
+  useSpeechRecognitionEvent("result", (event) => {
+    const text = event.results[0]?.transcript;
+    if (text) {
         setRecognizedText(text);
-        processVoiceLogic(text);
-    };
-    try {
-        Voice.onSpeechStart = () => setListening(true);
-        Voice.onSpeechEnd = () => setListening(false);
-        Voice.onSpeechError = (e) => { console.log(e); setListening(false); };
-        Voice.onSpeechResults = onSpeechResults;
-    } catch (e) {
-        console.error("Setup Error", e);
+        if (event.isFinal) {
+            processVoiceLogic(text);
+        }
     }
-  }, []);
+  });
+
+  useSpeechRecognitionEvent("start", () => setListening(true));
+  useSpeechRecognitionEvent("end", () => setListening(false));
 
   // --- 3. AUTO-PROMPT ---
   useEffect(() => {
@@ -160,37 +159,36 @@ export default function VotingScreen() {
   const speakPromptAndListen = () => {
     Speech.stop();
     stopListening(); 
+    
     const currentPos = positionsData[currentIndex];
     if (!currentPos) return;
 
     if (step === "selecting") {
         const names = currentPos.candidates.map(c => c.name).join(", ");
-        const prompt = `Voting for ${currentPos.position}. Candidates are: ${names}. Say a name, or say Skip.`;
+        const prompt = `Voting for ${currentPos.position}. Candidates are: ${names}. Say a name, Skip, or Go Back.`;
         
         Speech.speak(prompt, {
-            // FIXED: Added curly braces to return void
             onDone: () => { setTimeout(() => startListening(), 500); },
             onError: () => console.log("Speech Error")
         });
     }
   };
 
-  const startListening = async () => {
-    setErrorMessage("");
-    if (!Voice) return;
-    try {
-      await Voice.stop(); 
-      setRecognizedText(""); 
-      await Voice.start("en-US");
-    } catch (e: any) { console.error(e); }
+  const startListening = () => {
+    ExpoSpeechRecognitionModule.stop();
+    setRecognizedText("");
+    ExpoSpeechRecognitionModule.start({
+        lang: "en-US",
+        interimResults: true, 
+        maxAlternatives: 1,
+    });
   };
 
-  const stopListening = async () => {
-    if (!Voice) return;
-    try { await Voice.stop(); } catch (e) {}
+  const stopListening = () => {
+    ExpoSpeechRecognitionModule.stop();
   };
 
-  // --- 4. LOGIC PROCESSING ---
+  // --- 4. LOGIC ---
   const processVoiceLogic = (text: string) => {
     const clean = text.toLowerCase().trim();
     const currentStep = stepRef.current;
@@ -200,13 +198,21 @@ export default function VotingScreen() {
     stopListening();
 
     if (currentStep === "selecting") {
-      // 1. Check for Skip Command
+      // Back Command
+      if (clean.includes("back") || clean.includes("return") || clean.includes("home") || clean.includes("exit")) {
+        Speech.speak("Going back.", {
+             onDone: () => { router.back(); }
+        });
+        return;
+      }
+
+      // Skip
       if (clean.includes("skip") || clean.includes("next") || clean.includes("pass")) {
         handleSkip();
         return;
       }
 
-      // 2. Check for Name Match
+      // Name Match
       const match = currentPos.candidates.find(c => 
         c.name.toLowerCase().includes(clean) || clean.includes(c.name.toLowerCase())
       );
@@ -214,32 +220,26 @@ export default function VotingScreen() {
       if (match) {
         handleSelectCandidate(match);
       } else {
-        Speech.speak("I didn't catch that. Say a name, or say Skip.", {
-            // FIXED: Added curly braces
+        Speech.speak("I didn't catch that. Say a name, Skip, or Go Back.", {
             onDone: () => { setTimeout(() => startListening(), 500); }
         });
       }
 
     } else if (currentStep === "confirming") {
-      if (clean.includes("confirm") || clean.includes("yes") || clean.includes("submit")) {
+      if (clean.includes("confirm") || clean.includes("yes") || clean.includes("vote")) {
         submitVote();
-      } else if (clean.includes("cancel") || clean.includes("no")) {
+      } else if (clean.includes("cancel") || clean.includes("no") || clean.includes("back")) {
         cancelSelection();
       } else {
         Speech.speak("Please say Confirm or Cancel.", {
-            // FIXED: Added curly braces
             onDone: () => { setTimeout(() => startListening(), 500); }
         });
       }
     }
   };
 
-  // --- 5. ACTION HANDLERS ---
   const handleSkip = () => {
-    stopListening();
-    Speech.speak("Skipping position.", {
-      onDone: () => moveToNextPosition()
-    });
+    Speech.speak("Skipping position.", { onDone: () => moveToNextPosition() });
   };
 
   const moveToNextPosition = () => {
@@ -257,8 +257,7 @@ export default function VotingScreen() {
   const handleSelectCandidate = (candidate: Candidate) => {
     setSelectedCandidate(candidate);
     setStep("confirming");
-    Speech.speak(`Selected ${candidate.name}. Say Confirm or Cancel.`, {
-        // FIXED: Added curly braces
+    Speech.speak(`You selected ${candidate.name}. Say Confirm to vote, or Cancel.`, {
         onDone: () => { setTimeout(() => startListening(), 500); }
     });
   };
@@ -267,8 +266,7 @@ export default function VotingScreen() {
     setSelectedCandidate(null);
     setStep("selecting");
     setRecognizedText("");
-    Speech.speak("Selection cleared. Say a name or Skip.", {
-        // FIXED: Added curly braces
+    Speech.speak("Selection cleared. Say a name.", {
         onDone: () => { setTimeout(() => startListening(), 500); }
     });
   };
@@ -290,8 +288,7 @@ export default function VotingScreen() {
   };
 
 
-  // --- RENDER ---
-  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#eaeff4ff"/></View>;
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#007AFF"/></View>;
   if (positionsData.length === 0) return <View style={styles.center}><Text>No elections active.</Text></View>;
 
   const currentPosition = positionsData[currentIndex];
@@ -306,6 +303,7 @@ export default function VotingScreen() {
         </Text>
       </View>
 
+      {/* --- SCROLLABLE CONTENT --- */}
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Text style={styles.positionTitle}>{currentPosition.position}</Text>
 
@@ -334,35 +332,46 @@ export default function VotingScreen() {
           })}
         </View>
 
-        {/* SKIP BUTTON */}
+        {/* Skip Button (Inside Scroll) */}
         {step === "selecting" && (
            <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
              <Text style={styles.skipButtonText}>Skip / Abstain ⏭️</Text>
            </TouchableOpacity>
         )}
-
-        <View style={styles.statusSection}>
-            <Animated.View style={[styles.statusCircle, { transform: [{ scale: pulseAnim }] }]}>
-                <Text style={styles.statusIcon}>{listening ? "👂" : "🤖"}</Text>
-            </Animated.View>
-            <Text style={styles.statusText}>{listening ? "Listening..." : "Processing..."}</Text>
-            {recognizedText ? <Text style={styles.recognizedText}>Heard: "{recognizedText}"</Text> : null}
-        </View>
-
-        {selectedCandidate && (
-          <View style={styles.actionContainer}>
-            <Text style={styles.confirmPrompt}>Vote for {selectedCandidate.name}?</Text>
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={cancelSelection}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={submitVote}>
-                <Text style={styles.confirmText}>Confirm</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
       </ScrollView>
+
+      {/* --- FIXED FOOTER (Does NOT Scroll) --- */}
+      <View style={styles.voiceFooter}>
+         
+         {/* A. Status Indicator */}
+         {!selectedCandidate && (
+             <View style={styles.statusRow}>
+                <Animated.View style={[styles.statusCircle, { transform: [{ scale: pulseAnim }] }]}>
+                    <Text style={styles.statusIcon}>{listening ? "👂" : "🤖"}</Text>
+                </Animated.View>
+                <View style={{marginLeft: 10, flex: 1}}>
+                    <Text style={styles.statusText}>{listening ? "Listening..." : "Processing..."}</Text>
+                    {recognizedText ? <Text style={styles.recognizedText} numberOfLines={1}>Heard: "{recognizedText}"</Text> : null}
+                </View>
+             </View>
+         )}
+
+         {/* B. Confirmation Box (Replaces Status when active) */}
+         {selectedCandidate && step === "confirming" && (
+            <View style={styles.confirmBox}>
+                <Text style={styles.confirmTitle}>Vote for {selectedCandidate.name}?</Text>
+                <View style={styles.confirmRow}>
+                    <TouchableOpacity style={[styles.confirmBtn, styles.btnCancel]} onPress={cancelSelection}>
+                        <Text style={styles.btnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.confirmBtn, styles.btnVote]} onPress={submitVote}>
+                        <Text style={[styles.btnText, {color:'white'}]}>Confirm</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+         )}
+      </View>
+
     </SafeAreaView>
   );
 }
@@ -373,7 +382,10 @@ const styles = StyleSheet.create({
   header: { padding: 20, backgroundColor: "#fff", alignItems: "center", borderBottomWidth: 1, borderColor: "#eee" },
   headerTitle: { fontSize: 20, fontWeight: "800", color: "#333" },
   stepIndicator: { fontSize: 14, color: "#666", marginTop: 4 },
-  scrollContent: { padding: 20, paddingBottom: 50 },
+  
+  // Adjusted Scroll Padding to make room for footer
+  scrollContent: { padding: 20, paddingBottom: 160 }, 
+
   positionTitle: { fontSize: 22, fontWeight: "bold", color: "#1A4A7A", textAlign: "center", marginBottom: 20, textTransform: "uppercase" },
   grid: { gap: 12 },
   card: { flexDirection: "row", backgroundColor: "#fff", borderRadius: 16, padding: 12, alignItems: "center", borderWidth: 2, borderColor: "transparent", elevation: 2 },
@@ -385,21 +397,36 @@ const styles = StyleSheet.create({
   party: { fontSize: 14, color: "#666", marginTop: 2 },
   checkmarkBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center", marginLeft: 10 },
   checkmark: { color: "#fff", fontWeight: "bold", fontSize: 14 },
-  
-  // Skip Button Styles
   skipButton: { marginTop: 20, alignSelf: "center", backgroundColor: "#EDF2F7", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20 },
   skipButtonText: { color: "#4A5568", fontWeight: "bold", fontSize: 14 },
 
-  statusSection: { marginTop: 30, alignItems: "center", justifyContent: 'center' },
-  statusCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#E3F2FD", justifyContent: "center", alignItems: "center", marginBottom: 15, borderWidth: 1, borderColor: "#2196F3" },
-  statusIcon: { fontSize: 32 },
-  statusText: { fontSize: 16, fontWeight: "600", color: "#555" },
-  recognizedText: { marginTop: 8, fontSize: 16, color: "#333", fontStyle: "italic" },
-  actionContainer: { marginTop: 30, backgroundColor: "#fff", padding: 20, borderRadius: 16, alignItems: "center", elevation: 4 },
-  confirmPrompt: { fontSize: 16, fontWeight: "600", marginBottom: 16, color: "#333" },
-  actionButtons: { flexDirection: "row", width: "100%", gap: 10 },
-  cancelBtn: { flex: 1, padding: 14, borderRadius: 10, backgroundColor: "#F3F4F6", alignItems: "center" },
-  cancelText: { color: "#4B5563", fontWeight: "700" },
-  confirmBtn: { flex: 1, padding: 14, borderRadius: 10, backgroundColor: "#007AFF", alignItems: "center" },
-  confirmText: { color: "#fff", fontWeight: "700" },
+  // --- NEW FOOTER STYLES ---
+  voiceFooter: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: 'white',
+      borderTopWidth: 1,
+      borderColor: '#eee',
+      padding: 20,
+      elevation: 10,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+  },
+  statusRow: { flexDirection: 'row', alignItems: 'center' },
+  statusCircle: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#E3F2FD", justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: "#2196F3" },
+  statusIcon: { fontSize: 24 },
+  statusText: { fontSize: 16, fontWeight: "600", color: "#333" },
+  recognizedText: { fontSize: 14, color: "#666", fontStyle: "italic" },
+
+  confirmBox: { alignItems: 'center' },
+  confirmTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' },
+  confirmRow: { flexDirection: 'row', gap: 15, width: '100%' },
+  confirmBtn: { flex: 1, padding: 15, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  btnCancel: { backgroundColor: '#F5F5F5' },
+  btnVote: { backgroundColor: '#007AFF' },
+  btnText: { fontWeight: 'bold', fontSize: 16 }
 });

@@ -61,9 +61,11 @@
       [
         "@react-native-voice/voice",
         {
-          "microphonePermission": "Allow VoiceVotingApp to access your microphone."
+          "microphonePermission": "Allow VoiceVotingApp to access your microphone for voting."
         }
-      ]
+      ],
+      "expo-speech-recognition",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
