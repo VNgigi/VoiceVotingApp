@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Speech from 'expo-speech';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
@@ -17,6 +18,12 @@ import {
   View
 } from "react-native";
 import { db } from "../../firebaseConfig";
+
+// --- THEME ---
+const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
+const BG_COLOR = "#F9FAFB"; // Slate 50
+const TEXT_COLOR = "#1F2937"; // Gray 800
+const CARD_BG = "#FFFFFF";
 
 interface Contestant {
   id: string;
@@ -69,7 +76,6 @@ export default function Contestants() {
         const groupedData = groupContestantsByPosition(contestantsList);
         setSections(groupedData);
         
-        // --- CHANGED: Don't read all immediately. Ask user what they want. ---
         startIntroSequence();
 
       } catch (error) {
@@ -212,7 +218,7 @@ export default function Contestants() {
             maxAlternatives: 1,
         });
         setListening(true);
-        setStatusText("Listening... (Say 'President' or 'Read All')");
+        setStatusText("Listening...");
     } catch (e) {
         console.error("Mic Error", e);
     }
@@ -221,7 +227,7 @@ export default function Contestants() {
   useSpeechRecognitionEvent("result", (event) => {
     const text = event.results[0]?.transcript;
     if (text) {
-        if(listening) setStatusText(`Heard: "${text}"`);
+        if(listening) setStatusText(`"${text}"`);
         if (event.isFinal) {
             handleVoiceCommand(text);
         }
@@ -244,7 +250,7 @@ export default function Contestants() {
     } 
     
     // B. Read All
-    if (cmd.includes("read all") || cmd.includes("read everything")) {
+    if (cmd.includes("read all") || cmd.includes("read everything") || cmd.includes("all") || cmd.includes("all candidates")) {
         readAllContestants(sections);
         return;
     }
@@ -252,16 +258,12 @@ export default function Contestants() {
     // C. Specific Position Matching
     const matches = sections.filter(s => {
         const title = s.title.toLowerCase();
-        // Exact match check
         if (cmd.includes(title)) return true;
-        
-        // Keyword match check (e.g. "Security" matches "Security Secretary")
         const words = title.split(" ");
         return words.some(word => word.length > 3 && cmd.includes(word));
     });
 
     if (matches.length > 0) {
-        // Sort by length (Longest match first to prefer specific titles)
         matches.sort((a, b) => b.title.length - a.title.length);
         readSpecificSection(matches[0].title);
     } else {
@@ -271,11 +273,10 @@ export default function Contestants() {
     }
   };
 
-
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
         <Text style={styles.loadingText}>Loading Candidates...</Text>
       </View>
     );
@@ -283,21 +284,22 @@ export default function Contestants() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F5F7FA" />
+      <StatusBar barStyle="dark-content" backgroundColor={BG_COLOR} />
       
+      {/* --- HEADER --- */}
       <View style={styles.header}>
         <View>
             <Text style={styles.headerTitle}>2025 Contestants</Text>
             <Text style={styles.headerSubtitle}>Meet your future leaders</Text>
         </View>
 
-        {/* Toggle Button */}
         <TouchableOpacity 
-            style={[styles.audioButton, isReading ? styles.audioButtonStop : styles.audioButtonPlay]} 
+            style={[styles.playButton, isReading && styles.stopButton]} 
             onPress={isReading ? stopEverything : () => readAllContestants(sections)}
         >
-            <Text style={styles.audioButtonText}>
-                {isReading ? "Stop Audio" : "Read All"}
+            <Ionicons name={isReading ? "stop" : "play"} size={16} color={isReading ? "#EF4444" : "#FFF"} />
+            <Text style={[styles.playButtonText, isReading && { color: "#EF4444" }]}>
+                {isReading ? "Stop" : "Read All"}
             </Text>
         </TouchableOpacity>
       </View>
@@ -307,45 +309,60 @@ export default function Contestants() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         stickySectionHeadersEnabled={false}
+        showsVerticalScrollIndicator={false}
+        
         renderSectionHeader={({ section: { title } }) => (
           <View style={styles.sectionHeader}>
-            <View style={styles.sectionLine} />
             <Text style={styles.sectionTitle}>{title}</Text>
           </View>
         )}
+        
         renderItem={({ item }) => (
           <View style={styles.card}>
-            <Image 
-              source={{ 
-                uri: item.photoUri && !item.photoUri.startsWith('blob') 
-                  ? item.photoUri 
-                  : `https://ui-avatars.com/api/?name=${item.name}&background=random&size=128` 
-              }} 
-              style={styles.avatar} 
-            />
-            <View style={styles.infoContainer}>
-              <Text style={styles.name}>{item.name}</Text>
-              {item.briefInfo ? (
-                <Text style={styles.briefInfo} numberOfLines={2}>
-                  {item.briefInfo}
-                </Text>
-              ) : null}
-              {item.course ? <Text style={styles.details}>{item.course}</Text> : null}
-            </View>
+             {/* Left: Avatar */}
+             <Image 
+               source={{ 
+                 uri: item.photoUri && !item.photoUri.startsWith('blob') 
+                   ? item.photoUri 
+                   : `https://ui-avatars.com/api/?name=${item.name}&background=random&size=128` 
+               }} 
+               style={styles.avatar} 
+             />
+             
+             {/* Right: Details */}
+             <View style={styles.infoContainer}>
+               <Text style={styles.name}>{item.name}</Text>
+               
+               {item.briefInfo && (
+                  <View style={styles.badge}>
+                     <Text style={styles.badgeText} numberOfLines={1}>{item.briefInfo}</Text>
+                  </View>
+               )}
+               
+               {item.course && (
+                   <Text style={styles.details} numberOfLines={1}>{item.course}</Text>
+               )}
+             </View>
+
+             <Ionicons name="chevron-forward" size={20} color="#E5E7EB" />
           </View>
         )}
       />
 
-      {/* --- STATUS FOOTER --- */}
+      {/* --- FLOATING CONTROLS --- */}
       {(listening || isReading) && (
-          <View style={styles.statusFooter}>
-             <Text style={styles.statusText}>{statusText}</Text>
-             {listening && (
-                 <Animated.View style={[styles.micIndicator, { transform: [{ scale: pulseAnim }] }]}>
-                    <Text style={{fontSize: 20}}>🎤</Text>
-                 </Animated.View>
-             )}
-          </View>
+        <View style={styles.floatingControls}>
+           <View style={styles.statusPill}>
+               <View style={[styles.statusDot, listening && styles.statusDotActive]} />
+               <Text style={styles.statusText}>{statusText}</Text>
+           </View>
+           
+           {listening && (
+               <Animated.View style={[styles.micIndicator, { transform: [{ scale: pulseAnim }] }]}>
+                  <Ionicons name="mic" size={20} color="#FFF" />
+               </Animated.View>
+           )}
+        </View>
       )}
 
     </SafeAreaView>
@@ -353,43 +370,80 @@ export default function Contestants() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F5F7FA" },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#666" },
+  container: { flex: 1, backgroundColor: BG_COLOR },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: BG_COLOR },
+  loadingText: { marginTop: 12, color: "#6B7280", fontWeight: "500" },
+  
+  // HEADER
   header: { 
-    paddingVertical: 20, paddingHorizontal: 16, backgroundColor: "#fff", 
-    borderBottomWidth: 1, borderBottomColor: "#E1E4E8", 
+    paddingVertical: 16, paddingHorizontal: 24, 
+    backgroundColor: "#FFF", 
+    borderBottomWidth: 1, borderBottomColor: "#F3F4F6", 
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
   },
-  headerTitle: { fontSize: 24, fontWeight: "800", color: "#1A202C" },
-  headerSubtitle: { fontSize: 14, color: "#718096", marginTop: 4 },
+  headerTitle: { fontSize: 22, fontWeight: "800", color: TEXT_COLOR, letterSpacing: -0.5 },
+  headerSubtitle: { fontSize: 13, color: "#6B7280", marginTop: 2 },
   
-  audioButton: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20 },
-  audioButtonStop: { backgroundColor: "#FED7D7" },
-  audioButtonPlay: { backgroundColor: "#C6F6D5" },
-  audioButtonText: { fontWeight: "700", fontSize: 12, color: "#2D3748" },
-
-  listContent: { padding: 16, paddingBottom: 100 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 24, marginBottom: 12 },
-  sectionLine: { width: 4, height: 20, backgroundColor: "#3182CE", marginRight: 8, borderRadius: 2 },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: "#4A5568", textTransform: "uppercase", letterSpacing: 0.5 },
-  card: { flexDirection: "row", backgroundColor: "#fff", borderRadius: 16, padding: 12, marginBottom: 12, alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3 },
-  avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: "#EDF2F7" },
-  infoContainer: { flex: 1, marginLeft: 16, justifyContent: "center" },
-  name: { fontSize: 18, fontWeight: "700", color: "#2D3748", marginBottom: 2 },
-  briefInfo: { fontSize: 14, fontWeight: "600", color: "#3182CE", marginBottom: 2 },
-  details: { fontSize: 13, color: "#A0AEC0" },
-
-  // New Styles for Voice UI
-  statusFooter: {
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#eee',
-      padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-      elevation: 10
+  // BUTTONS
+  playButton: { 
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      backgroundColor: PRIMARY_COLOR, 
+      paddingVertical: 8, paddingHorizontal: 16, 
+      borderRadius: 20,
+      shadowColor: PRIMARY_COLOR, shadowOpacity: 0.3, shadowRadius: 5, elevation: 3
   },
-  statusText: { fontSize: 16, fontWeight: '600', color: '#555', marginRight: 10 },
+  stopButton: { backgroundColor: "#FEF2F2", shadowOpacity: 0 },
+  playButtonText: { fontWeight: "700", fontSize: 12, color: "#FFF" },
+
+  // LIST
+  listContent: { padding: 24, paddingBottom: 100 },
+  
+  // SECTION
+  sectionHeader: { marginTop: 24, marginBottom: 12 },
+  sectionTitle: { fontSize: 13, fontWeight: "700", color: "#6B7280", textTransform: "uppercase", letterSpacing: 0.8 },
+  
+  // CARD
+  card: { 
+    flexDirection: "row", 
+    backgroundColor: CARD_BG, 
+    borderRadius: 20, 
+    padding: 16, 
+    marginBottom: 12, 
+    alignItems: "center", 
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 8, 
+    elevation: 2,
+    borderWidth: 1, borderColor: "#F3F4F6"
+  },
+  avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: "#E5E7EB", borderWidth: 1, borderColor: "#F9FAFB" },
+  infoContainer: { flex: 1, marginLeft: 16, marginRight: 8, justifyContent: "center" },
+  name: { fontSize: 16, fontWeight: "700", color: TEXT_COLOR, marginBottom: 4 },
+  
+  badge: { alignSelf: 'flex-start', backgroundColor: "#EEF2FF", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginBottom: 4 },
+  badgeText: { fontSize: 12, fontWeight: "600", color: PRIMARY_COLOR },
+  
+  details: { fontSize: 12, color: "#9CA3AF" },
+
+  // VOICE UI
+  floatingControls: {
+      position: 'absolute', bottom: 30, left: 24, right: 24,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'
+  },
+  statusPill: {
+      flex: 1, flexDirection: 'row', alignItems: 'center',
+      backgroundColor: "rgba(255,255,255,0.95)", 
+      paddingHorizontal: 16, paddingVertical: 12,
+      borderRadius: 30, marginRight: 16,
+      shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 10, elevation: 5,
+      borderWidth: 1, borderColor: "#E5E7EB"
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#D1D5DB", marginRight: 10 },
+  statusDotActive: { backgroundColor: "#EF4444" },
+  statusText: { fontSize: 13, color: "#4B5563", fontWeight: "600" },
+
   micIndicator: {
-      width: 40, height: 40, borderRadius: 20, backgroundColor: '#E3F2FD',
-      justifyContent: 'center', alignItems: 'center'
+      width: 44, height: 44, borderRadius: 22, 
+      backgroundColor: PRIMARY_COLOR,
+      justifyContent: 'center', alignItems: 'center',
+      shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, elevation: 6
   }
 });

@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
@@ -10,10 +11,12 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  Dimensions,
   Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -21,6 +24,15 @@ import {
   View
 } from "react-native";
 import { db, storage } from "../../firebaseConfig";
+
+// --- THEME ---
+const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
+const BG_COLOR = "#F9FAFB"; // Slate 50
+const TEXT_COLOR = "#1F2937"; // Gray 800
+const INPUT_BG = "#F3F4F6"; // Gray 100
+const ACTIVE_BG = "#EEF2FF"; // Indigo 50
+
+const { width } = Dimensions.get("window");
 
 export default function CandidateApplication() {
   const router = useRouter();
@@ -49,7 +61,6 @@ export default function CandidateApplication() {
 
   // --- 1. SETUP & INTRO ---
   useEffect(() => {
-    // Start the wizard after 1 second
     const timer = setTimeout(() => {
         startWizardStep(1);
     }, 1000);
@@ -88,27 +99,26 @@ export default function CandidateApplication() {
     let prompt = "";
 
     switch(step) {
-        case 1: prompt = "Application Wizard started. Step 1. Please say your Full Name."; break;
-        case 2: prompt = "Step 2. Say the position you are running for, like President or Treasurer."; break;
+        case 1: prompt = "Application started. Step 1. Please say your Full Name."; break;
+        case 2: prompt = "Step 2. Say the position you are running for."; break;
         case 3: prompt = "Step 3. Say your Admission Number."; break;
         case 4: prompt = "Step 4. Say your Age."; break;
         case 5: prompt = "Step 5. Say your Course or Department."; break;
         case 6: prompt = "Step 6. Say your Email Address."; break;
         case 7: 
-            prompt = "Step 7. Photo Upload. Please tap the camera icon to select a photo. You may need sighted assistance to pick the correct file. Say Next when you are done."; 
+            prompt = "Step 7. Photo Upload. Tap the camera icon to select a photo. Say Next when done."; 
             break;
         case 8: 
-            prompt = "Step 8. Document Upload. Please tap the button to select your eligibility PDF. Ask for help to ensure it is the right file. Say Next when done."; 
+            prompt = "Step 8. Document Upload. Tap the button to select your eligibility PDF. Say Next when done."; 
             break;
-        case 9: prompt = "Step 9. Say a brief manifesto or info about yourself."; break;
+        case 9: prompt = "Step 9. Say a brief manifesto about yourself."; break;
         case 10: prompt = "Application complete. Say Submit to finish, or Cancel to exit."; break;
     }
 
     Speech.speak(prompt, {
         onDone: () => {
-            // For upload steps (7 & 8), we wait for user to say "Next" after they manually tap
             if (step === 7 || step === 8) {
-                setStatusText("Waiting for upload... Say 'Next' when done.");
+                setStatusText("Waiting for upload... Say 'Next'");
                 startListening();
             } else {
                 startListening();
@@ -128,7 +138,7 @@ export default function CandidateApplication() {
         });
         setListening(true);
         if (currentStep !== 7 && currentStep !== 8) {
-             setStatusText("Listening for answer...");
+             setStatusText("Listening...");
         }
     } catch (e) {
         console.error("Mic Error", e);
@@ -139,7 +149,7 @@ export default function CandidateApplication() {
     const text = event.results[0]?.transcript;
     if (text) {
         if (listening && currentStep !== 7 && currentStep !== 8) {
-             setStatusText(`Heard: "${text}"`);
+             setStatusText(`"${text}"`);
         }
         if (event.isFinal) {
             handleVoiceInput(text);
@@ -151,24 +161,20 @@ export default function CandidateApplication() {
     const cmd = text.toLowerCase();
     stopEverything();
 
-    // Global Cancel
     if (cmd.includes("cancel") || cmd.includes("exit") || cmd.includes("stop")) {
         router.back();
         return;
     }
 
-    // Step Logic
     switch(currentStep) {
         case 1: // Name
             setName(text);
             Speech.speak(`Saved name ${text}.`, { onDone: () => startWizardStep(2) });
             break;
         case 2: // Position
-            // Simple fuzzy match for positions
             const validPositions = ["President", "Vice President", "Secretary General", "Treasurer", "Gender", "Sports", "Entertainment"];
             const match = validPositions.find(p => cmd.includes(p.toLowerCase()));
             if (match) {
-                // Map short names to full names if needed
                 const fullPos = match === "Gender" ? "Gender and Disability Representative" : 
                                 match === "Sports" || match === "Entertainment" ? "Sports, Entertainment and Security Secretary" : match;
                 setPosition(fullPos);
@@ -178,16 +184,16 @@ export default function CandidateApplication() {
             }
             break;
         case 3: // Admin No
-            setAdmissionNumber(text.replace(/ /g, "").toUpperCase()); // Remove spaces for admin no
+            setAdmissionNumber(text.replace(/ /g, "").toUpperCase()); 
             Speech.speak("Admission number saved.", { onDone: () => startWizardStep(4) });
             break;
         case 4: // Age
-            const ageNum = text.match(/\d+/); // Extract number
+            const ageNum = text.match(/\d+/); 
             if (ageNum) {
                 setAge(ageNum[0]);
                 Speech.speak(`Age ${ageNum[0]} saved.`, { onDone: () => startWizardStep(5) });
             } else {
-                Speech.speak("Please say a number for your age.", { onDone: () => {startListening();} });
+                Speech.speak("Please say a number.", { onDone: () => {startListening();} });
             }
             break;
         case 5: // Course
@@ -199,10 +205,10 @@ export default function CandidateApplication() {
             setEmail(formattedEmail);
             Speech.speak("Email saved.", { onDone: () => startWizardStep(7) });
             break;
-        case 7: // Photo (Manual Wait)
+        case 7: // Photo
             if (cmd.includes("next") || cmd.includes("done")) {
                 if (!photoUri) {
-                    Speech.speak("No photo selected. Please tap the camera icon first.", { onDone: () => {startListening(); } });
+                    Speech.speak("No photo selected.", { onDone: () => {startListening(); } });
                 } else {
                     startWizardStep(8);
                 }
@@ -210,10 +216,10 @@ export default function CandidateApplication() {
                 Speech.speak("Tap the camera icon, then say Next.", { onDone: () => {startListening(); } });
             }
             break;
-        case 8: // Doc (Manual Wait)
+        case 8: // Doc
             if (cmd.includes("next") || cmd.includes("done")) {
                 if (!documentUri) {
-                    Speech.speak("No document selected. Please tap the button first.", { onDone: () => {startListening(); } });
+                    Speech.speak("No document selected.", { onDone: () => {startListening(); } });
                 } else {
                     startWizardStep(9);
                 }
@@ -235,7 +241,6 @@ export default function CandidateApplication() {
     }
   };
 
-
   // --- HELPER: Upload to Storage ---
   const uploadFile = async (uri: string, folder: string, fileName: string) => {
     const response = await fetch(uri);
@@ -247,7 +252,7 @@ export default function CandidateApplication() {
 
   // --- PICKERS ---
   const pickImage = async () => {
-    Speech.stop(); // Stop speaking so they can focus
+    Speech.stop(); 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -256,7 +261,7 @@ export default function CandidateApplication() {
     });
     if (!result.canceled) {
         setPhotoUri(result.assets[0].uri);
-        Speech.speak("Photo selected. Say Next to continue.");
+        Speech.speak("Photo selected. Say Next.");
     }
   };
 
@@ -268,7 +273,7 @@ export default function CandidateApplication() {
     if (!result.canceled) {
       setDocumentUri(result.assets[0].uri);
       setDocumentName(result.assets[0].name);
-      Speech.speak("Document selected. Say Next to continue.");
+      Speech.speak("Document selected. Say Next.");
     }
   };
 
@@ -278,7 +283,7 @@ export default function CandidateApplication() {
 
     if (!name || !position || !admissionNumber || !course || !age || !briefInfo || !photoUri || !documentUri) {
       Speech.speak("Missing details. Please check the form.");
-      Alert.alert("Missing Fields", "Please fill in all details and upload documents.");
+      Alert.alert("Missing Fields", "Please fill in all details.");
       return;
     }
 
@@ -314,171 +319,273 @@ export default function CandidateApplication() {
     }
   };
 
+  // Progress Calculation
+  const progress = (currentStep / 10) * 100;
+
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
-      <View style={styles.headerContainer}>
-         <Text style={styles.header}>📝 Candidate Application</Text>
-         <Text style={styles.subText}>Step {currentStep}/10</Text>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      
+      {/* --- HEADER --- */}
+      <View style={styles.header}>
+         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color={TEXT_COLOR} />
+         </TouchableOpacity>
+         <Text style={styles.headerTitle}>New Application</Text>
+         <View style={{width: 24}} /> 
+      </View>
+
+      {/* --- PROGRESS BAR --- */}
+      <View style={styles.progressContainer}>
+         <View style={[styles.progressBar, { width: `${progress}%` }]} />
       </View>
       
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.formCard}>
-          
-          {/* 1. PHOTO UPLOAD */}
-          <View style={[styles.fieldContainer, currentStep === 7 && styles.activeField]}>
-              <TouchableOpacity onPress={pickImage} style={styles.imagePicker}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <Text style={styles.sectionTitle}>Candidate Details</Text>
+        
+        {/* --- 1. PHOTO UPLOAD (Hero) --- */}
+        <View style={styles.photoContainer}>
+            <TouchableOpacity onPress={pickImage} style={[styles.imagePicker, currentStep === 7 && styles.activeBorder]}>
                 {photoUri ? (
-                  <Image source={{ uri: photoUri }} style={styles.previewImage} />
+                    <Image source={{ uri: photoUri }} style={styles.previewImage} />
                 ) : (
-                  <View style={styles.placeholderImage}>
-                    <Text style={{fontSize: 24}}>📷</Text>
-                    <Text style={styles.imageText}>Upload Photo</Text>
-                  </View>
+                    <View style={styles.placeholderImage}>
+                        <Ionicons name="camera" size={32} color="#9CA3AF" />
+                    </View>
                 )}
-              </TouchableOpacity>
-              {currentStep === 7 && <Text style={styles.helperText}>Tap above. Ask for help if needed.</Text>}
-          </View>
-
-          {/* 2. BASIC INFO */}
-          <View style={[styles.fieldContainer, currentStep === 1 && styles.activeField]}>
-            <TextInput placeholder="Full Name *" value={name} onChangeText={setName} style={styles.input} />
-          </View>
-          
-          <View style={[styles.fieldContainer, styles.pickerContainer, currentStep === 2 && styles.activeField]}>
-            <Picker selectedValue={position} onValueChange={setPosition}>
-              <Picker.Item label="Select Position... *" value="" color="#999" />
-              <Picker.Item label="President" value="President" />
-              <Picker.Item label="Vice President" value="Vice President" />
-              <Picker.Item label="Secretary General" value="Secretary General" />
-              <Picker.Item label="Treasurer" value="Treasurer" />
-              <Picker.Item label="Gender and Disability Rep" value="Gender and Disability Representative" />
-              <Picker.Item label="Sports & Ent. Secretary" value="Sports, Entertainment and Security Secretary" />
-            </Picker>
-          </View>
-
-          <View style={styles.rowInputs}>
-             <View style={[styles.fieldContainer, {flex: 1, marginRight: 10}, currentStep === 3 && styles.activeField]}>
-                <TextInput 
-                    placeholder="Admin No *" 
-                    value={admissionNumber} onChangeText={setAdmissionNumber} 
-                    style={styles.input} 
-                />
-             </View>
-             <View style={[styles.fieldContainer, {width: 80}, currentStep === 4 && styles.activeField]}>
-                <TextInput 
-                    placeholder="Age *" 
-                    value={age} onChangeText={setAge} keyboardType="numeric" 
-                    style={styles.input} 
-                />
-             </View>
-          </View>
-
-          <View style={[styles.fieldContainer, currentStep === 5 && styles.activeField]}>
-            <TextInput placeholder="Course / Department *" value={course} onChangeText={setCourse} style={styles.input} />
-          </View>
-
-          <View style={[styles.fieldContainer, currentStep === 6 && styles.activeField]}>
-            <TextInput placeholder="Email Address *" value={email} onChangeText={setEmail} keyboardType="email-address" style={styles.input} />
-          </View>
-
-          {/* 4. DOCUMENT UPLOAD */}
-          <View style={[styles.fieldContainer, currentStep === 8 && styles.activeField]}>
-            <Text style={styles.label}>Eligibility Document (PDF/Image) *</Text>
-            <TouchableOpacity onPress={pickDocument} style={styles.docPicker}>
-                <Text style={styles.docPickerText}>
-                {documentName ? `📄 ${documentName}` : "📎 Select Document"}
-                </Text>
+                <View style={styles.editBadge}>
+                    <Ionicons name="pencil" size={12} color="#fff" />
+                </View>
             </TouchableOpacity>
-            {currentStep === 8 && <Text style={styles.helperText}>Tap above to select PDF.</Text>}
-          </View>
+            <Text style={styles.photoLabel}>Upload Passport Photo</Text>
+        </View>
 
-          {/* 5. BRIEF INFO */}
-          <View style={[styles.fieldContainer, currentStep === 9 && styles.activeField]}>
-            <TextInput 
-                placeholder="Brief Info / Manifesto *" 
-                value={briefInfo} onChangeText={setBriefInfo} multiline numberOfLines={4}
-                style={[styles.input, { height: 100, textAlignVertical: 'top' }]} 
-            />
-          </View>
 
-          {/* SUBMIT BUTTON */}
-          <TouchableOpacity onPress={handleSubmit} style={styles.submitBtn} disabled={loading}>
-            <Text style={styles.submitText}>
-              {loading ? "Submitting..." : "Submit Application"}
-            </Text>
-          </TouchableOpacity>
+        {/* --- FORM FIELDS --- */}
+        <View style={styles.formGrid}>
+            
+            {/* NAME */}
+            <View style={[styles.inputWrapper, currentStep === 1 && styles.activeWrapper]}>
+                <Ionicons name="person-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Full Name</Text>
+                    <TextInput 
+                        placeholder="John Doe" 
+                        value={name} onChangeText={setName} 
+                        style={styles.input} 
+                    />
+                </View>
+            </View>
+
+            {/* POSITION (Picker) */}
+            <View style={[styles.inputWrapper, currentStep === 2 && styles.activeWrapper]}>
+                <Ionicons name="ribbon-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Position</Text>
+                    <View style={styles.pickerBox}>
+                        <Picker selectedValue={position} onValueChange={setPosition} style={{marginTop: -10, marginBottom: -10}}>
+                            <Picker.Item label="Select Position..." value="" color="#9CA3AF" />
+                            <Picker.Item label="President" value="President" />
+                            <Picker.Item label="Vice President" value="Vice President" />
+                            <Picker.Item label="Secretary General" value="Secretary General" />
+                            <Picker.Item label="Treasurer" value="Treasurer" />
+                            <Picker.Item label="Gender & Disability Rep" value="Gender and Disability Representative" />
+                            <Picker.Item label="Sports & Ent. Secretary" value="Sports, Entertainment and Security Secretary" />
+                        </Picker>
+                    </View>
+                </View>
+            </View>
+
+            {/* ROW: ADMIN & AGE */}
+            <View style={styles.row}>
+                <View style={[styles.inputWrapper, {flex: 1}, currentStep === 3 && styles.activeWrapper]}>
+                    <Ionicons name="id-card-outline" size={20} color="#6B7280" style={styles.icon} />
+                    <View style={{flex: 1}}>
+                        <Text style={styles.label}>Admin No.</Text>
+                        <TextInput placeholder="12345" value={admissionNumber} onChangeText={setAdmissionNumber} style={styles.input} />
+                    </View>
+                </View>
+                
+                <View style={[styles.inputWrapper, {width: 100}, currentStep === 4 && styles.activeWrapper]}>
+                    <View style={{flex: 1, paddingLeft: 12}}>
+                        <Text style={styles.label}>Age</Text>
+                        <TextInput placeholder="20" value={age} onChangeText={setAge} keyboardType="numeric" style={styles.input} />
+                    </View>
+                </View>
+            </View>
+
+            {/* COURSE */}
+            <View style={[styles.inputWrapper, currentStep === 5 && styles.activeWrapper]}>
+                <Ionicons name="school-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Course / Department</Text>
+                    <TextInput placeholder="Computer Science" value={course} onChangeText={setCourse} style={styles.input} />
+                </View>
+            </View>
+
+            {/* EMAIL */}
+            <View style={[styles.inputWrapper, currentStep === 6 && styles.activeWrapper]}>
+                <Ionicons name="mail-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <TextInput placeholder="email@student.com" value={email} onChangeText={setEmail} keyboardType="email-address" style={styles.input} />
+                </View>
+            </View>
+
+            {/* DOCUMENT UPLOAD */}
+            <View style={[styles.uploadBox, currentStep === 8 && styles.activeWrapper]}>
+                 <Text style={styles.uploadTitle}>Eligibility Document</Text>
+                 <TouchableOpacity onPress={pickDocument} style={styles.uploadBtn}>
+                    <Ionicons name={documentName ? "document-text" : "cloud-upload-outline"} size={24} color={PRIMARY_COLOR} />
+                    <Text style={styles.uploadText} numberOfLines={1}>
+                        {documentName ? documentName : "Click to upload PDF"}
+                    </Text>
+                 </TouchableOpacity>
+            </View>
+
+            {/* MANIFESTO */}
+            <View style={[styles.inputWrapper, {alignItems: 'flex-start', paddingTop: 12}, currentStep === 9 && styles.activeWrapper]}>
+                <Ionicons name="megaphone-outline" size={20} color="#6B7280" style={[styles.icon, {marginTop: 4}]} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Manifesto / Brief Info</Text>
+                    <TextInput 
+                        placeholder="Tell us why we should vote for you..." 
+                        value={briefInfo} onChangeText={setBriefInfo} 
+                        multiline numberOfLines={4}
+                        style={[styles.input, { height: 80, textAlignVertical: 'top' }]} 
+                    />
+                </View>
+            </View>
+
+            {/* SUBMIT */}
+            <TouchableOpacity 
+                onPress={handleSubmit} 
+                style={[styles.submitBtn, loading && {opacity: 0.7}]} 
+                disabled={loading}
+            >
+                <Text style={styles.submitText}>
+                    {loading ? "Submitting..." : "Submit Application"}
+                </Text>
+                {!loading && <Ionicons name="checkmark-circle" size={20} color="#fff" />}
+            </TouchableOpacity>
 
         </View>
-        <View style={{height: 100}} />
+        <View style={{height: 120}} /> 
       </ScrollView>
 
       {/* --- FLOATING STATUS BAR --- */}
-      <View style={styles.statusFooter}>
-            <Text style={styles.statusText}>{statusText}</Text>
-            {listening && (
-                <Animated.View style={[styles.micIndicator, { transform: [{ scale: pulseAnim }] }]}>
-                    <Text style={{fontSize: 20}}>🎤</Text>
-                </Animated.View>
-            )}
-            
-            {/* Reset Button if user gets stuck */}
-            {!listening && (
-                <TouchableOpacity onPress={() => startWizardStep(currentStep)} style={{marginLeft: 'auto'}}>
-                    <Text style={{color: '#007AFF'}}>🔄 Re-ask</Text>
-                </TouchableOpacity>
-            )}
+      <View style={styles.floatingContainer}>
+         <View style={styles.statusPill}>
+             {listening && <View style={styles.statusDot} />}
+             <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
+         </View>
+         
+         <TouchableOpacity 
+            onPress={() => startWizardStep(currentStep)}
+            style={styles.micButton}
+         >
+             {listening ? (
+                 <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                     <Ionicons name="mic" size={24} color="#fff" />
+                 </Animated.View>
+             ) : (
+                <Ionicons name="refresh" size={24} color="#fff" />
+             )}
+         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F5F7FA" },
-  headerContainer: { padding: 20, paddingTop: 50, backgroundColor: "#1A4A7A" },
-  header: { fontSize: 24, fontWeight: "bold", color: "white" },
-  subText: { color: "#E0E0E0", marginTop: 5 },
-  scrollContent: { padding: 20 },
-  formCard: { backgroundColor: "white", padding: 20, borderRadius: 12, elevation: 3 },
+  container: { flex: 1, backgroundColor: BG_COLOR },
   
-  // Highlight Active Field
-  fieldContainer: { marginBottom: 15, borderRadius: 8 },
-  activeField: { borderWidth: 2, borderColor: "#28a745", backgroundColor: "#e8f5e9", padding: 5 },
-  helperText: { color: "#28a745", fontSize: 12, fontWeight: "bold", textAlign: "center", marginTop: 5 },
-
-  imagePicker: { alignSelf: 'center' },
-  previewImage: { width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: '#1E6BB8' },
-  placeholderImage: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#ccc' },
-  imageText: { fontSize: 10, color: '#666', marginTop: 5 },
-
-  input: { borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 8, fontSize: 16, backgroundColor: '#fff', width: '100%' },
-  rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
-  pickerContainer: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, backgroundColor: "#fff" },
-  
-  label: { fontSize: 14, fontWeight: 'bold', color: '#444', marginBottom: 8 },
-  docPicker: { 
-    borderWidth: 1, 
-    borderColor: "#1E6BB8", 
-    borderStyle: 'dashed', 
-    padding: 15, 
-    borderRadius: 8, 
-    alignItems: 'center',
-    backgroundColor: '#F0F7FF'
+  // HEADER
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 16,
+    backgroundColor: "#fff",
   },
-  docPickerText: { color: '#1E6BB8', fontWeight: '600' },
+  backBtn: { marginRight: 16 },
+  headerTitle: { fontSize: 20, fontWeight: "700", color: TEXT_COLOR },
   
-  submitBtn: { backgroundColor: "#28a745", padding: 15, borderRadius: 8, alignItems: "center", marginTop: 10 },
-  submitText: { color: "white", fontWeight: "bold", fontSize: 18 },
+  // PROGRESS
+  progressContainer: { width: '100%', height: 4, backgroundColor: "#E5E7EB" },
+  progressBar: { height: '100%', backgroundColor: PRIMARY_COLOR },
 
-  // Footer
-  statusFooter: {
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#eee',
-      padding: 15, flexDirection: 'row', alignItems: 'center',
-      elevation: 10
+  scrollContent: { padding: 24 },
+  sectionTitle: { fontSize: 18, fontWeight: "700", color: TEXT_COLOR, marginBottom: 20 },
+
+  // PHOTO UPLOAD
+  photoContainer: { alignItems: 'center', marginBottom: 32 },
+  imagePicker: { position: 'relative' },
+  previewImage: { width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: '#fff' },
+  placeholderImage: { width: 100, height: 100, borderRadius: 50, backgroundColor: INPUT_BG, justifyContent: 'center', alignItems: 'center' },
+  editBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: PRIMARY_COLOR, padding: 6, borderRadius: 20, borderWidth: 2, borderColor: '#fff' },
+  photoLabel: { marginTop: 12, fontSize: 14, color: PRIMARY_COLOR, fontWeight: "600" },
+  activeBorder: { borderWidth: 2, borderColor: PRIMARY_COLOR, borderRadius: 55, padding: 2 },
+
+  // FORM GRID
+  formGrid: { gap: 16 },
+  row: { flexDirection: 'row', gap: 12 },
+  
+  // INPUT WRAPPER
+  inputWrapper: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1, borderColor: "transparent",
+    shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 6, elevation: 1
   },
-  statusText: { fontSize: 14, fontWeight: '600', color: '#555', marginRight: 10, flex: 1 },
-  micIndicator: {
-      width: 40, height: 40, borderRadius: 20, backgroundColor: '#E3F2FD',
-      justifyContent: 'center', alignItems: 'center'
+  activeWrapper: {
+    borderColor: PRIMARY_COLOR,
+    backgroundColor: ACTIVE_BG,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.1, shadowRadius: 8
+  },
+  icon: { marginRight: 12 },
+  label: { fontSize: 11, color: "#6B7280", fontWeight: "600", marginBottom: 2, textTransform: 'uppercase' },
+  input: { fontSize: 16, color: TEXT_COLOR, padding: 0, height: 24 },
+  pickerBox: { marginLeft: -8 },
+
+  // DOCUMENT UPLOAD
+  uploadBox: { 
+      backgroundColor: "#fff", borderRadius: 16, padding: 16, 
+      borderWidth: 1, borderColor: "#E5E7EB", borderStyle: 'dashed' 
+  },
+  uploadTitle: { fontSize: 12, color: "#6B7280", fontWeight: "600", marginBottom: 8, textTransform: 'uppercase' },
+  uploadBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, backgroundColor: ACTIVE_BG, borderRadius: 8 },
+  uploadText: { color: PRIMARY_COLOR, fontWeight: "600", fontSize: 14, flex: 1 },
+
+  // SUBMIT
+  submitBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: PRIMARY_COLOR,
+    padding: 18, borderRadius: 16,
+    marginTop: 16,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.3, shadowRadius: 10, elevation: 4
+  },
+  submitText: { color: "white", fontWeight: "700", fontSize: 16 },
+
+  // FLOATING STATUS
+  floatingContainer: {
+      position: 'absolute', bottom: 30, left: 24, right: 24,
+      flexDirection: 'row', alignItems: 'center', gap: 12
+  },
+  statusPill: {
+      flex: 1, flexDirection: 'row', alignItems: 'center',
+      backgroundColor: "rgba(31, 41, 55, 0.9)", // Dark gray backdrop
+      paddingHorizontal: 16, paddingVertical: 14,
+      borderRadius: 30,
+      shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 10, elevation: 5
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#EF4444", marginRight: 10 },
+  statusText: { fontSize: 14, color: "#fff", fontWeight: "600" },
+  
+  micButton: {
+      width: 52, height: 52, borderRadius: 26, 
+      backgroundColor: PRIMARY_COLOR,
+      justifyContent: 'center', alignItems: 'center',
+      shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, elevation: 6
   }
 });

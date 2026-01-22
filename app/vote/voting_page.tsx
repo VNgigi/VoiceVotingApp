@@ -1,12 +1,23 @@
+import { Ionicons } from "@expo/vector-icons"; // Added for modern icons
 import { useRouter } from "expo-router";
 import * as Speech from "expo-speech";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
-import { collection, doc, getDocs, increment, query, setDoc } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  increment,
+  query,
+  runTransaction
+} from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   Image,
   SafeAreaView,
   ScrollView,
@@ -34,8 +45,14 @@ interface ElectionPosition {
   candidates: Candidate[];
 }
 
+const { width } = Dimensions.get('window');
+const ACTIVE_COLOR = "#4F46E5"; // Indigo 600
+const BG_COLOR = "#F9FAFB"; // Slate 50
+
 export default function VotingScreen() {
   const router = useRouter();
+  const auth = getAuth();
+  const user = auth.currentUser;
 
   // --- STATE ---
   const [positionsData, setPositionsData] = useState<ElectionPosition[]>([]);
@@ -55,6 +72,9 @@ export default function VotingScreen() {
   const indexRef = useRef(0);
   const stepRef = useRef("selecting");
   const selectedRef = useRef<Candidate | null>(null);
+  
+  const isIntentionalStop = useRef(false); 
+  const retryCount = useRef(0);
 
   // Sync State to Refs
   useEffect(() => { positionsRef.current = positionsData; }, [positionsData]);
@@ -78,6 +98,12 @@ export default function VotingScreen() {
 
   // --- 1. SETUP ---
   useEffect(() => {
+    if (!user) {
+        Alert.alert("Error", "You must be logged in to vote.");
+        router.replace("/");
+        return;
+    }
+
     const setup = async () => {
       const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!result.granted) {
@@ -106,8 +132,7 @@ export default function VotingScreen() {
     fetchData();
 
     return () => {
-        Speech.stop();
-        ExpoSpeechRecognitionModule.stop();
+        stopEverything();
     };
   }, []);
 
@@ -141,25 +166,71 @@ export default function VotingScreen() {
     if (text) {
         setRecognizedText(text);
         if (event.isFinal) {
+            isIntentionalStop.current = true;
             processVoiceLogic(text);
         }
     }
   });
 
   useSpeechRecognitionEvent("start", () => setListening(true));
-  useSpeechRecognitionEvent("end", () => setListening(false));
+
+  useSpeechRecognitionEvent("end", () => {
+    setListening(false);
+    if (!isIntentionalStop.current) {
+        handleSilenceOrError();
+    }
+  });
+
+  useSpeechRecognitionEvent("error", (event) => {
+      if (!isIntentionalStop.current) {
+          handleSilenceOrError();
+      }
+  });
+
+  const handleSilenceOrError = () => {
+      if (retryCount.current < 2) {
+          retryCount.current += 1;
+          Speech.speak("I didn't hear anything. Please say a name, Skip, or Go Back.", {
+              onDone: () => { startListening(); }
+          });
+      } else {
+          Speech.speak("Mic turned off. Tap the button to try again.");
+          isIntentionalStop.current = true;
+      }
+  };
 
   // --- 3. AUTO-PROMPT ---
   useEffect(() => {
     if (!loading && positionsData.length > 0) {
-      speakPromptAndListen();
+      checkIfAlreadyVotedAndStart();
     }
   }, [currentIndex, loading, positionsData]);
 
+  const checkIfAlreadyVotedAndStart = async () => {
+      const currentPos = positionsData[currentIndex];
+      if (!currentPos || !user) return;
+
+      stopEverything();
+
+      try {
+          const userVoteRef = doc(db, "user_votes", user.uid);
+          const docSnap = await getDoc(userVoteRef);
+
+          if (docSnap.exists() && docSnap.data()[currentPos.position] === true) {
+              Speech.speak(`You have already voted for ${currentPos.position}. Moving to next.`, {
+                  onDone: () => { moveToNextPosition(); }
+              });
+          } else {
+              speakPromptAndListen();
+          }
+      } catch (e) {
+          console.error("Error checking vote status", e);
+          speakPromptAndListen();
+      }
+  };
+
   const speakPromptAndListen = () => {
-    Speech.stop();
-    stopListening(); 
-    
+    stopEverything();
     const currentPos = positionsData[currentIndex];
     if (!currentPos) return;
 
@@ -168,13 +239,17 @@ export default function VotingScreen() {
         const prompt = `Voting for ${currentPos.position}. Candidates are: ${names}. Say a name, Skip, or Go Back.`;
         
         Speech.speak(prompt, {
-            onDone: () => { setTimeout(() => startListening(), 500); },
+            onDone: () => { 
+                retryCount.current = 0; 
+                startListening(); 
+            },
             onError: () => console.log("Speech Error")
         });
     }
   };
 
   const startListening = () => {
+    isIntentionalStop.current = false;
     ExpoSpeechRecognitionModule.stop();
     setRecognizedText("");
     ExpoSpeechRecognitionModule.start({
@@ -184,35 +259,34 @@ export default function VotingScreen() {
     });
   };
 
-  const stopListening = () => {
+  const stopEverything = () => {
+    isIntentionalStop.current = true;
+    Speech.stop();
     ExpoSpeechRecognitionModule.stop();
+    setListening(false);
   };
 
-  // --- 4. LOGIC ---
+  // --- 4. LOGIC PROCESSING ---
   const processVoiceLogic = (text: string) => {
     const clean = text.toLowerCase().trim();
     const currentStep = stepRef.current;
     const currentPos = positionsRef.current[indexRef.current];
 
     if (!currentPos) return;
-    stopListening();
+    
+    stopEverything();
+    retryCount.current = 0;
 
     if (currentStep === "selecting") {
-      // Back Command
-      if (clean.includes("back") || clean.includes("return") || clean.includes("home") || clean.includes("exit")) {
-        Speech.speak("Going back.", {
-             onDone: () => { router.back(); }
-        });
+      if (clean.includes("back") || clean.includes("return") || clean.includes("home")) {
+        Speech.speak("Going back.", { onDone: () => { router.back(); } });
         return;
       }
-
-      // Skip
       if (clean.includes("skip") || clean.includes("next") || clean.includes("pass")) {
         handleSkip();
         return;
       }
 
-      // Name Match
       const match = currentPos.candidates.find(c => 
         c.name.toLowerCase().includes(clean) || clean.includes(c.name.toLowerCase())
       );
@@ -220,24 +294,24 @@ export default function VotingScreen() {
       if (match) {
         handleSelectCandidate(match);
       } else {
-        Speech.speak("I didn't catch that. Say a name, Skip, or Go Back.", {
-            onDone: () => { setTimeout(() => startListening(), 500); }
+        Speech.speak("I didn't catch a valid name. Say the name again, Skip, or Go Back.", {
+            onDone: () => { startListening(); }
         });
       }
-
     } else if (currentStep === "confirming") {
       if (clean.includes("confirm") || clean.includes("yes") || clean.includes("vote")) {
         submitVote();
-      } else if (clean.includes("cancel") || clean.includes("no") || clean.includes("back")) {
+      } else if (clean.includes("cancel") || clean.includes("no")) {
         cancelSelection();
       } else {
         Speech.speak("Please say Confirm or Cancel.", {
-            onDone: () => { setTimeout(() => startListening(), 500); }
+            onDone: () => { startListening(); }
         });
       }
     }
   };
 
+  // --- 5. ACTIONS ---
   const handleSkip = () => {
     Speech.speak("Skipping position.", { onDone: () => moveToNextPosition() });
   };
@@ -258,7 +332,7 @@ export default function VotingScreen() {
     setSelectedCandidate(candidate);
     setStep("confirming");
     Speech.speak(`You selected ${candidate.name}. Say Confirm to vote, or Cancel.`, {
-        onDone: () => { setTimeout(() => startListening(), 500); }
+        onDone: () => { startListening(); }
     });
   };
 
@@ -267,46 +341,71 @@ export default function VotingScreen() {
     setStep("selecting");
     setRecognizedText("");
     Speech.speak("Selection cleared. Say a name.", {
-        onDone: () => { setTimeout(() => startListening(), 500); }
+        onDone: () => { startListening(); }
     });
   };
 
   const submitVote = async () => {
     const candidate = selectedRef.current;
     const currentPos = positionsRef.current[indexRef.current];
-    if (!candidate || !currentPos) return;
+    
+    if (!candidate || !currentPos || !user) return;
 
     try {
-      const voteRef = doc(db, "votes", currentPos.position);
-      await setDoc(voteRef, { [candidate.name]: increment(1) }, { merge: true });
-      Speech.speak(`Vote recorded.`);
+      await runTransaction(db, async (transaction) => {
+          const userVoteRef = doc(db, "user_votes", user.uid);
+          const userVoteDoc = await transaction.get(userVoteRef);
+
+          if (userVoteDoc.exists() && userVoteDoc.data()[currentPos.position]) {
+              throw "ALREADY_VOTED";
+          }
+          const voteRef = doc(db, "votes", currentPos.position);
+          transaction.set(voteRef, { [candidate.name]: increment(1) }, { merge: true });
+          transaction.set(userVoteRef, { [currentPos.position]: true }, { merge: true });
+      });
+
+      Speech.speak(`Vote recorded for ${candidate.name}.`);
       moveToNextPosition();
+
     } catch (e) {
-      console.error(e);
-      Speech.speak("Error recording vote. Try again.");
+      if (e === "ALREADY_VOTED") {
+          Speech.speak("You have already voted for this position.");
+          moveToNextPosition();
+      } else {
+          console.error(e);
+          Speech.speak("Error recording vote. Please try again.");
+          startListening();
+      }
     }
   };
 
-
-  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#007AFF"/></View>;
-  if (positionsData.length === 0) return <View style={styles.center}><Text>No elections active.</Text></View>;
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color={ACTIVE_COLOR}/></View>;
+  if (positionsData.length === 0) return <View style={styles.center}><Text style={styles.emptyText}>No elections active.</Text></View>;
 
   const currentPosition = positionsData[currentIndex];
+  // Calculate Progress
+  const progress = ((currentIndex + 1) / positionsData.length) * 100;
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      
+      {/* --- HEADER --- */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Voice Vote</Text>
-        <Text style={styles.stepIndicator}>
-          Position {currentIndex + 1} of {positionsData.length}
+        <View style={styles.headerTopRow}>
+            <Text style={styles.headerTitle}>Voice Vote</Text>
+            <View style={styles.progressContainer}>
+                <View style={[styles.progressBar, { width: `${progress}%` }]} />
+            </View>
+        </View>
+        <Text style={styles.subHeader}>
+             {currentIndex + 1} / {positionsData.length}
         </Text>
       </View>
 
-      {/* --- SCROLLABLE CONTENT --- */}
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Text style={styles.positionTitle}>{currentPosition.position}</Text>
-
+        
         <View style={styles.grid}>
           {currentPosition.candidates.map((candidate) => {
             const isSelected = selectedCandidate?.id === candidate.id;
@@ -319,114 +418,221 @@ export default function VotingScreen() {
                 key={candidate.id}
                 style={[styles.card, isSelected && styles.cardSelected]}
                 onPress={() => handleSelectCandidate(candidate)} 
-                activeOpacity={0.8}
+                activeOpacity={0.9}
               >
                 <Image source={imageSource} style={styles.avatar} resizeMode="cover" />
+                
                 <View style={styles.cardInfo}>
                   <Text style={[styles.name, isSelected && styles.nameSelected]}>{candidate.name}</Text>
-                  {candidate.briefInfo ? <Text style={styles.party} numberOfLines={1}>{candidate.briefInfo}</Text> : null}
+                  {candidate.briefInfo && (
+                      <Text style={styles.party} numberOfLines={1}>{candidate.briefInfo}</Text>
+                  )}
                 </View>
-                {isSelected && <View style={styles.checkmarkBadge}><Text style={styles.checkmark}>✓</Text></View>}
+
+                {isSelected ? (
+                     <Ionicons name="checkmark-circle" size={28} color={ACTIVE_COLOR} />
+                ) : (
+                    <View style={styles.radioPlaceholder} />
+                )}
               </TouchableOpacity>
             );
           })}
         </View>
 
-        {/* Skip Button (Inside Scroll) */}
         {step === "selecting" && (
            <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-             <Text style={styles.skipButtonText}>Skip / Abstain ⏭️</Text>
+             <Text style={styles.skipButtonText}>Skip this Position</Text>
+             <Ionicons name="play-skip-forward" size={16} color="#6B7280" style={{marginLeft:8}} />
            </TouchableOpacity>
         )}
       </ScrollView>
 
-      {/* --- FIXED FOOTER (Does NOT Scroll) --- */}
+      {/* --- FLOATING FOOTER --- */}
       <View style={styles.voiceFooter}>
-         
-         {/* A. Status Indicator */}
+         {/* LISTENING MODE */}
          {!selectedCandidate && (
              <View style={styles.statusRow}>
-                <Animated.View style={[styles.statusCircle, { transform: [{ scale: pulseAnim }] }]}>
-                    <Text style={styles.statusIcon}>{listening ? "👂" : "🤖"}</Text>
-                </Animated.View>
-                <View style={{marginLeft: 10, flex: 1}}>
-                    <Text style={styles.statusText}>{listening ? "Listening..." : "Processing..."}</Text>
-                    {recognizedText ? <Text style={styles.recognizedText} numberOfLines={1}>Heard: "{recognizedText}"</Text> : null}
+                <TouchableOpacity onPress={() => startListening()}>
+                    <Animated.View style={[styles.micButton, { transform: [{ scale: pulseAnim }] }]}>
+                        <Ionicons name={listening ? "mic" : "mic-off"} size={24} color="#fff" />
+                    </Animated.View>
+                </TouchableOpacity>
+                
+                <View style={styles.statusTextContainer}>
+                    <Text style={styles.statusTitle}>
+                        {listening ? "Listening..." : "Microphone Paused"}
+                    </Text>
+                    <Text style={styles.statusSub} numberOfLines={1}>
+                        {recognizedText ? `"${recognizedText}"` : "Say a name or 'Skip'"}
+                    </Text>
                 </View>
              </View>
          )}
 
-         {/* B. Confirmation Box (Replaces Status when active) */}
+         {/* CONFIRMATION MODE */}
          {selectedCandidate && step === "confirming" && (
-            <View style={styles.confirmBox}>
-                <Text style={styles.confirmTitle}>Vote for {selectedCandidate.name}?</Text>
-                <View style={styles.confirmRow}>
-                    <TouchableOpacity style={[styles.confirmBtn, styles.btnCancel]} onPress={cancelSelection}>
-                        <Text style={styles.btnText}>Cancel</Text>
+            <View style={styles.confirmContainer}>
+                <Text style={styles.confirmHeader}>Confirm Vote?</Text>
+                <View style={styles.confirmActions}>
+                    <TouchableOpacity style={styles.btnCancel} onPress={cancelSelection}>
+                        <Ionicons name="close" size={20} color="#374151" />
+                        <Text style={styles.btnCancelText}>Cancel</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.confirmBtn, styles.btnVote]} onPress={submitVote}>
-                        <Text style={[styles.btnText, {color:'white'}]}>Confirm</Text>
+                    
+                    <TouchableOpacity style={styles.btnConfirm} onPress={submitVote}>
+                        <Ionicons name="checkmark" size={20} color="#fff" />
+                        <Text style={styles.btnConfirmText}>Confirm</Text>
                     </TouchableOpacity>
                 </View>
             </View>
          )}
       </View>
-
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F5F7FA" },
+  // LAYOUT
+  container: { flex: 1, backgroundColor: BG_COLOR },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: { padding: 20, backgroundColor: "#fff", alignItems: "center", borderBottomWidth: 1, borderColor: "#eee" },
-  headerTitle: { fontSize: 20, fontWeight: "800", color: "#333" },
-  stepIndicator: { fontSize: 14, color: "#666", marginTop: 4 },
+  scrollContent: { padding: 24, paddingBottom: 180 }, // Extra padding for footer
   
-  // Adjusted Scroll Padding to make room for footer
-  scrollContent: { padding: 20, paddingBottom: 160 }, 
+  // HEADER
+  header: { 
+    paddingHorizontal: 24, 
+    paddingVertical: 16, 
+    backgroundColor: "#fff", 
+    borderBottomWidth: 1, 
+    borderColor: "#F3F4F6",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 10
+  },
+  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerTitle: { fontSize: 24, fontWeight: "800", color: "#111827", letterSpacing: -0.5 },
+  subHeader: { fontSize: 13, color: "#6B7280", marginTop: 4, fontWeight: "600" },
+  progressContainer: { width: 100, height: 6, backgroundColor: "#E5E7EB", borderRadius: 3, overflow: 'hidden' },
+  progressBar: { height: '100%', backgroundColor: ACTIVE_COLOR, borderRadius: 3 },
 
-  positionTitle: { fontSize: 22, fontWeight: "bold", color: "#1A4A7A", textAlign: "center", marginBottom: 20, textTransform: "uppercase" },
-  grid: { gap: 12 },
-  card: { flexDirection: "row", backgroundColor: "#fff", borderRadius: 16, padding: 12, alignItems: "center", borderWidth: 2, borderColor: "transparent", elevation: 2 },
-  cardSelected: { borderColor: "#007AFF", backgroundColor: "#F0F9FF" },
-  avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: "#eee" },
-  cardInfo: { marginLeft: 16, flex: 1 },
-  name: { fontSize: 18, fontWeight: "700", color: "#333" },
-  nameSelected: { color: "#007AFF" },
-  party: { fontSize: 14, color: "#666", marginTop: 2 },
-  checkmarkBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center", marginLeft: 10 },
-  checkmark: { color: "#fff", fontWeight: "bold", fontSize: 14 },
-  skipButton: { marginTop: 20, alignSelf: "center", backgroundColor: "#EDF2F7", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20 },
-  skipButtonText: { color: "#4A5568", fontWeight: "bold", fontSize: 14 },
+  // CONTENT
+  positionTitle: { 
+    fontSize: 20, 
+    fontWeight: "700", 
+    color: "#374151", 
+    marginBottom: 24, 
+    marginTop: 8,
+    textAlign: "left"
+  },
+  grid: { gap: 16 },
+  
+  // CARDS
+  card: { 
+    flexDirection: "row", 
+    backgroundColor: "#fff", 
+    borderRadius: 20, 
+    padding: 16, 
+    alignItems: "center", 
+    borderWidth: 1.5, 
+    borderColor: "transparent",
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  cardSelected: { 
+    borderColor: ACTIVE_COLOR, 
+    backgroundColor: "#EEF2FF",
+    shadowOpacity: 0.1,
+    shadowColor: ACTIVE_COLOR
+  },
+  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#E5E7EB", borderWidth: 1, borderColor: "#F3F4F6" },
+  cardInfo: { marginLeft: 16, flex: 1, justifyContent: 'center' },
+  name: { fontSize: 17, fontWeight: "700", color: "#1F2937", marginBottom: 4 },
+  nameSelected: { color: ACTIVE_COLOR },
+  party: { fontSize: 14, color: "#6B7280", fontWeight: "500" },
+  radioPlaceholder: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: "#E5E7EB" },
 
-  // --- NEW FOOTER STYLES ---
+  // SKIP BUTTON
+  skipButton: { 
+    marginTop: 32, 
+    flexDirection: 'row',
+    alignSelf: "center", 
+    alignItems: 'center',
+    paddingVertical: 12, 
+    paddingHorizontal: 24, 
+    borderRadius: 30,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E5E7EB"
+  },
+  skipButtonText: { color: "#6B7280", fontWeight: "600", fontSize: 14 },
+  emptyText: { color: "#9CA3AF", fontSize: 16 },
+
+  // FOOTER UI
   voiceFooter: {
       position: 'absolute',
       bottom: 0,
       left: 0,
       right: 0,
-      backgroundColor: 'white',
-      borderTopWidth: 1,
-      borderColor: '#eee',
-      padding: 20,
-      elevation: 10,
+      backgroundColor: 'rgba(255,255,255,0.95)',
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      padding: 24,
+      paddingBottom: 34, // Safe area
       shadowColor: "#000",
-      shadowOffset: { width: 0, height: -2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
+      shadowOffset: { width: 0, height: -5 },
+      shadowOpacity: 0.08,
+      shadowRadius: 15,
+      elevation: 20,
   },
   statusRow: { flexDirection: 'row', alignItems: 'center' },
-  statusCircle: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#E3F2FD", justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: "#2196F3" },
-  statusIcon: { fontSize: 24 },
-  statusText: { fontSize: 16, fontWeight: "600", color: "#333" },
-  recognizedText: { fontSize: 14, color: "#666", fontStyle: "italic" },
+  micButton: { 
+    width: 56, 
+    height: 56, 
+    borderRadius: 28, 
+    backgroundColor: ACTIVE_COLOR, 
+    justifyContent: "center", 
+    alignItems: "center", 
+    shadowColor: ACTIVE_COLOR,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: {width: 0, height: 4},
+    elevation: 8
+  },
+  statusTextContainer: { marginLeft: 16, flex: 1 },
+  statusTitle: { fontSize: 16, fontWeight: "700", color: "#1F2937" },
+  statusSub: { fontSize: 14, color: "#6B7280", marginTop: 2 },
 
-  confirmBox: { alignItems: 'center' },
-  confirmTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' },
-  confirmRow: { flexDirection: 'row', gap: 15, width: '100%' },
-  confirmBtn: { flex: 1, padding: 15, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  btnCancel: { backgroundColor: '#F5F5F5' },
-  btnVote: { backgroundColor: '#007AFF' },
-  btnText: { fontWeight: 'bold', fontSize: 16 }
+  // CONFIRMATION UI
+  confirmContainer: { width: '100%' },
+  confirmHeader: { fontSize: 18, fontWeight: "700", color: "#1F2937", marginBottom: 16, textAlign: 'center' },
+  confirmActions: { flexDirection: 'row', gap: 12 },
+  btnCancel: { 
+    flex: 1, 
+    flexDirection: 'row',
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    backgroundColor: "#F3F4F6", 
+    padding: 16, 
+    borderRadius: 16,
+    gap: 8
+  },
+  btnConfirm: { 
+    flex: 1, 
+    flexDirection: 'row',
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    backgroundColor: ACTIVE_COLOR, 
+    padding: 16, 
+    borderRadius: 16,
+    gap: 8,
+    shadowColor: ACTIVE_COLOR,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: {width: 0, height: 4}
+  },
+  btnCancelText: { fontWeight: '700', fontSize: 16, color: "#374151" },
+  btnConfirmText: { fontWeight: '700', fontSize: 16, color: "#fff" }
 });

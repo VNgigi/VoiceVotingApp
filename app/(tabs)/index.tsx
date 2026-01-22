@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons"; // Added for modern icons
 import { useFocusEffect, useRouter } from "expo-router";
 import * as Speech from "expo-speech";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
@@ -5,12 +6,18 @@ import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  Dimensions,
   SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View
 } from "react-native";
+
+const { width } = Dimensions.get("window");
+const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
+const BG_COLOR = "#F9FAFB"; // Slate 50
 
 export default function Index() {
   const router = useRouter();
@@ -21,7 +28,6 @@ export default function Index() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // --- 1. START SEQUENCE ON FOCUS ---
-  // usage: Runs every time this screen becomes active/visible
   useFocusEffect(
     useCallback(() => {
       let timer: any;
@@ -40,7 +46,6 @@ export default function Index() {
   );
 
   // --- ANIMATION FOR MIC ---
-  // Use React.useEffect here because this depends on 'listening' state changes, not focus
   React.useEffect(() => {
     if (listening) {
       Animated.loop(
@@ -69,7 +74,7 @@ export default function Index() {
         onDone: () => {
             Speech.speak("Please say Login to enter, or Sign Up to create an account.", {
                 onDone: () => {
-                    setStatusText("Your turn to speak...");
+                    setStatusText("Listening...");
                     startListening();
                 },
                 onError: (e) => console.log("Speech Error", e)
@@ -93,7 +98,7 @@ export default function Index() {
             maxAlternatives: 1,
         });
         setListening(true);
-        setStatusText("Listening... (Say Login or Sign Up)");
+        setStatusText("Say 'Login' or 'Sign Up'");
     } catch (e) {
         console.error("Mic Error", e);
     }
@@ -103,7 +108,7 @@ export default function Index() {
   useSpeechRecognitionEvent("result", (event) => {
     const text = event.results[0]?.transcript;
     if (text) {
-        if(listening) setStatusText(`Heard: "${text}"`);
+        if(listening) setStatusText(`"${text}"`);
         if (event.isFinal) {
             handleVoiceCommand(text);
         }
@@ -143,101 +148,130 @@ export default function Index() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={BG_COLOR} />
+      
       <View style={styles.content}>
-          <Text style={styles.title}>Welcome to Voice Voting App</Text>
           
-          {/* Status Text for Voice Feedback */}
-          <Text style={[styles.statusText, listening ? styles.statusActive : null]}>
-            {statusText}
-          </Text>
+          {/* HERO SECTION */}
+          <View style={styles.heroSection}>
+              <View style={styles.iconCircle}>
+                <Ionicons name="finger-print-outline" size={64} color={PRIMARY_COLOR} />
+              </View>
+              <Text style={styles.title}>Voice Vote</Text>
+              <Text style={styles.subtitle}>Secure, Accessible, Modern.</Text>
+          </View>
+          
+          {/* STATUS PILL */}
+          <View style={[styles.statusPill, listening && styles.statusPillActive]}>
+             <View style={[styles.statusDot, listening && styles.statusDotActive]} />
+             <Text style={styles.statusText}>{statusText}</Text>
+          </View>
 
-          <TouchableOpacity style={styles.button} onPress={() => speakAndNavigate("Opening Login", "/login")}>
-            <Text style={styles.buttonText}>Login</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={[styles.button, styles.outlineButton]} onPress={() => speakAndNavigate("Opening Sign Up", "/signup")}>
-            <Text style={styles.buttonText}>Sign Up</Text>
-          </TouchableOpacity>
+          {/* ACTIONS */}
+          <View style={styles.actionContainer}>
+            <TouchableOpacity 
+                style={styles.primaryButton} 
+                onPress={() => speakAndNavigate("Opening Login", "/login")}
+                activeOpacity={0.9}
+            >
+                <Text style={styles.primaryButtonText}>Login</Text>
+                <Ionicons name="arrow-forward" size={20} color="#fff" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+                style={styles.secondaryButton} 
+                onPress={() => speakAndNavigate("Opening Sign Up", "/signup")}
+                activeOpacity={0.9}
+            >
+                <Text style={styles.secondaryButtonText}>Create Account</Text>
+            </TouchableOpacity>
+          </View>
       </View>
 
-      {/* Floating Mic Button (Manual Toggle) */}
+      {/* FLOATING MIC */}
       <TouchableOpacity 
-        style={[styles.fab, listening ? styles.fabActive : null]} 
+        style={styles.fabWrapper}
         onPress={() => {
              if (listening) {
                  stopEverything();
-                 setStatusText("Mic Stopped.");
+                 setStatusText("Mic Paused");
              } else {
                  startListening();
              }
         }}
-        activeOpacity={0.8}
+        activeOpacity={0.9}
       >
-         <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-            <Text style={styles.fabIcon}>{listening ? "👂" : "🎤"}</Text>
+         <Animated.View style={[styles.fab, listening && styles.fabListening, { transform: [{ scale: pulseAnim }] }]}>
+            <Ionicons name={listening ? "mic" : "mic-off"} size={28} color="#fff" />
          </Animated.View>
       </TouchableOpacity>
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
+  container: { flex: 1, backgroundColor: BG_COLOR },
+  
   content: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
+    paddingHorizontal: 32,
+    paddingBottom: 80 // Space for FAB
   },
-  title: {
-    fontSize: 26,
-    fontWeight: "bold",
-    marginBottom: 10,
-    textAlign: "center",
-    color: "#333",
+
+  // HERO
+  heroSection: { alignItems: 'center', marginBottom: 40 },
+  iconCircle: {
+      width: 120, height: 120, borderRadius: 60,
+      backgroundColor: "#E0E7FF", // Indigo 100
+      justifyContent: 'center', alignItems: 'center',
+      marginBottom: 24,
+      borderWidth: 1, borderColor: "#C7D2FE"
   },
-  statusText: { 
-    fontSize: 16, 
-    fontStyle: "italic", 
-    color: "#666", 
-    marginBottom: 30, 
-    textAlign: "center",
-    height: 24
+  title: { fontSize: 32, fontWeight: "800", color: "#1F2937", letterSpacing: -1 },
+  subtitle: { fontSize: 16, color: "#6B7280", marginTop: 8, fontWeight: "500" },
+
+  // STATUS
+  statusPill: {
+      flexDirection: 'row', alignItems: 'center',
+      backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 10,
+      borderRadius: 20, marginBottom: 40,
+      borderWidth: 1, borderColor: "#E5E7EB",
+      shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 4, elevation: 2
   },
-  statusActive: { 
-    color: "#007bff", 
-    fontWeight: "bold" 
+  statusPillActive: { borderColor: PRIMARY_COLOR },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#D1D5DB", marginRight: 8 },
+  statusDotActive: { backgroundColor: "#EF4444" },
+  statusText: { fontSize: 14, color: "#4B5563", fontWeight: "600" },
+
+  // BUTTONS
+  actionContainer: { width: '100%', gap: 16 },
+  primaryButton: {
+    backgroundColor: PRIMARY_COLOR,
+    paddingVertical: 18, borderRadius: 16,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: {width: 0, height: 4},
+    elevation: 8
   },
-  button: {
-    backgroundColor: "#007bff",
-    paddingVertical: 15,
-    paddingHorizontal: 40,
-    borderRadius: 10,
-    marginVertical: 10,
-    width: "100%",
-    alignItems: "center",
-    elevation: 3,
-  },
-  outlineButton: {
-    backgroundColor: "#6c757d", // Grey for secondary action
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "600",
-  },
+  primaryButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
   
-  // Mic Styles
-  fab: {
-    position: 'absolute', bottom: 40, right: 30,
-    width: 70, height: 70, borderRadius: 35,
-    backgroundColor: '#007bff', justifyContent: 'center', alignItems: 'center',
-    elevation: 6, shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 4.65,
+  secondaryButton: {
+    backgroundColor: "#fff",
+    paddingVertical: 18, borderRadius: 16,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1.5, borderColor: "#E5E7EB"
   },
-  fabActive: { backgroundColor: '#dc3545' }, // Red when listening
-  fabIcon: { fontSize: 30 },
+  secondaryButtonText: { color: "#374151", fontSize: 18, fontWeight: "600" },
+
+  // FAB
+  fabWrapper: { position: 'absolute', bottom: 40, right: 30 },
+  fab: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: "#1F2937",
+    justifyContent: 'center', alignItems: 'center',
+    shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, elevation: 8
+  },
+  fabListening: { backgroundColor: "#EF4444" }
 });

@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Audio } from "expo-av";
 import { useRouter } from "expo-router";
 import * as Speech from "expo-speech";
@@ -13,6 +14,7 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +22,13 @@ import {
   View
 } from "react-native";
 import { db, storage } from "../../firebaseConfig";
+
+// --- THEME ---
+const PRIMARY_COLOR = "#DC2626"; 
+const BG_COLOR = "#F9FAFB"; 
+const CARD_BG = "#FFFFFF";
+const TEXT_COLOR = "#1F2937";
+const ACTIVE_BG = "#FEF2F2"; 
 
 export default function ReportScreen() {
   const router = useRouter();
@@ -36,7 +45,7 @@ export default function ReportScreen() {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
 
   // --- VOICE NAV STATE ---
-  const [currentStep, setCurrentStep] = useState(1); // 1=Cat, 2=Desc, 3=Proof, 4=Submit
+  const [currentStep, setCurrentStep] = useState(1); 
   const [listening, setListening] = useState(false);
   const [statusText, setStatusText] = useState("Initializing...");
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -48,9 +57,10 @@ export default function ReportScreen() {
     Audio.requestPermissionsAsync();
     
     // Start the Voice Wizard after a brief delay
-    setTimeout(() => startWizardStep(1), 1000);
+    const timer = setTimeout(() => startWizardStep(1), 1000);
 
     return () => {
+      clearTimeout(timer);
       if (sound) sound.unloadAsync();
       stopEverything();
     };
@@ -59,6 +69,7 @@ export default function ReportScreen() {
   // --- ANIMATION ---
   useEffect(() => {
     if (listening) {
+      // Start pulsing
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: true }),
@@ -66,6 +77,8 @@ export default function ReportScreen() {
         ])
       ).start();
     } else {
+      // Stop pulsing and reset smoothly
+      pulseAnim.stopAnimation();
       pulseAnim.setValue(1);
     }
   }, [listening]);
@@ -95,7 +108,6 @@ export default function ReportScreen() {
 
     Speech.speak(prompt, {
         onDone: () => {
-             // Don't auto-listen on Step 3 (User might want to record audio manually)
              if (step !== 3) {
                  startListening();
              } else {
@@ -123,7 +135,7 @@ export default function ReportScreen() {
   useSpeechRecognitionEvent("result", (event) => {
     const text = event.results[0]?.transcript;
     if (text) {
-        if(listening) setStatusText(`Heard: "${text}"`);
+        if(listening) setStatusText(`"${text}"`);
         if (event.isFinal) {
             handleVoiceInput(text);
         }
@@ -154,9 +166,9 @@ export default function ReportScreen() {
             });
         }
     }
-    // STEP 2: DESCRIPTION (DICTATION)
+    // STEP 2: DESCRIPTION
     else if (currentStep === 2) {
-        setDescription(text); // Set whatever they said
+        setDescription(text); 
         Speech.speak("Description saved.", {
             onDone: () => startWizardStep(3)
         });
@@ -166,7 +178,6 @@ export default function ReportScreen() {
         if (cmd.includes("next") || cmd.includes("skip") || cmd.includes("no")) {
             startWizardStep(4);
         } else {
-            // If they said something else, assume they are trying to navigate
              Speech.speak("Say Next to continue to submission.", {
                 onDone: () => {startListening();}
             });
@@ -184,9 +195,7 @@ export default function ReportScreen() {
     }
   };
 
-
-  // --- 3. AUDIO RECORDING (MANUAL ONLY) ---
-  // Note: We stop voice recognition when recording audio proof to avoid conflict
+  // --- 3. AUDIO RECORDING ---
   const startRecordingProof = async () => {
     stopEverything(); 
     try {
@@ -207,7 +216,6 @@ export default function ReportScreen() {
     const uri = recording.getURI();
     setRecording(null);
     setAudioUri(uri);
-    // Resume Wizard
     Speech.speak("Audio recorded. Say Next to continue.", {
         onDone: () => {startListening();}
     });
@@ -221,7 +229,6 @@ export default function ReportScreen() {
       await sound.playAsync();
     } catch (e) { console.log("Playback Error", e); }
   };
-
 
   // --- 4. SUBMIT LOGIC ---
   const submitReport = async () => {
@@ -273,84 +280,156 @@ export default function ReportScreen() {
     } catch (e) { throw new Error("Audio upload failed"); }
   };
 
+  const progress = (currentStep / 4) * 100;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} collapsable={false}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      
+      {/* HEADER */}
+      <View style={styles.header}>
+         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="close" size={24} color={TEXT_COLOR} />
+         </TouchableOpacity>
+         <Text style={styles.headerTitle}>Report Incident</Text>
+         <View style={{width: 24}} /> 
+      </View>
+      
+      {/* PROGRESS */}
+      <View style={styles.progressTrack}>
+         <Animated.View style={[styles.progressBar, { width: `${progress}%` }]} />
+      </View>
+
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex:1}}>
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           
-          <Text style={styles.headerTitle}>📢 Report Interference</Text>
-          <Text style={styles.headerSub}>Voice Assistant Active: Step {currentStep}/4</Text>
+          <Text style={styles.stepTitle}>
+            {currentStep === 1 && "What type of issue?"}
+            {currentStep === 2 && "Describe the incident"}
+            {currentStep === 3 && "Add Evidence"}
+            {currentStep === 4 && "Review & Submit"}
+          </Text>
 
           {/* STEP 1: CATEGORY */}
-          <View style={[styles.section, currentStep === 1 && styles.activeSection]}>
-            <Text style={styles.label}>1. What is the issue?</Text>
-            <View style={styles.grid}>
-                {categories.map((cat) => (
-                <TouchableOpacity
-                    key={cat}
-                    style={[styles.catButton, category === cat && styles.catButtonSelected]}
-                    onPress={() => { setCategory(cat); startWizardStep(2); }}
-                >
-                    <Text style={[styles.catText, category === cat && styles.catTextSelected]}>{cat}</Text>
-                </TouchableOpacity>
-                ))}
-            </View>
+          <View style={[styles.card, currentStep === 1 && styles.activeCard]}>
+             <View style={styles.cardHeader}>
+                <Ionicons name="alert-circle-outline" size={20} color={PRIMARY_COLOR} />
+                <Text style={styles.cardLabel}>Category</Text>
+             </View>
+             
+             <View style={styles.grid}>
+                {categories.map((cat) => {
+                    const isSelected = category === cat;
+                    return (
+                        <TouchableOpacity
+                            key={cat}
+                            style={[styles.chip, isSelected && styles.chipSelected]}
+                            onPress={() => { setCategory(cat); startWizardStep(2); }}
+                        >
+                            <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>{cat}</Text>
+                        </TouchableOpacity>
+                    );
+                })}
+             </View>
           </View>
 
           {/* STEP 2: DESCRIPTION */}
-          <View style={[styles.section, currentStep === 2 && styles.activeSection]}>
-            <Text style={styles.label}>2. Description (Speak to type)</Text>
-            <TextInput
+          <View style={[styles.card, currentStep === 2 && styles.activeCard]}>
+             <View style={styles.cardHeader}>
+                <Ionicons name="document-text-outline" size={20} color={PRIMARY_COLOR} />
+                <Text style={styles.cardLabel}>Description</Text>
+             </View>
+             
+             <TextInput
                 style={styles.textArea}
-                placeholder="Listening for description..."
+                placeholder="Start speaking or type here..."
                 multiline
                 numberOfLines={4}
                 value={description}
                 onChangeText={setDescription}
                 textAlignVertical="top"
-            />
+             />
           </View>
 
           {/* STEP 3: AUDIO */}
-          <View style={[styles.section, currentStep === 3 && styles.activeSection]}>
-            <Text style={styles.label}>3. Record Proof (Hold Button)</Text>
-            {!audioUri ? (
+          <View style={[styles.card, currentStep === 3 && styles.activeCard]}>
+             <View style={styles.cardHeader}>
+                <Ionicons name="mic-outline" size={20} color={PRIMARY_COLOR} />
+                <Text style={styles.cardLabel}>Voice Evidence</Text>
+             </View>
+
+             {!audioUri ? (
                 <TouchableOpacity
-                style={[styles.recordBtn, isRecordingProof && styles.recordBtnActive]}
-                onPressIn={startRecordingProof}
-                onPressOut={stopRecordingProof}
+                    style={[styles.recordBtn, isRecordingProof && styles.recordBtnActive]}
+                    onPressIn={startRecordingProof}
+                    onPressOut={stopRecordingProof}
+                    activeOpacity={0.8}
                 >
-                <Text style={styles.recordIcon}>{isRecordingProof ? "👂" : "🎙️"}</Text>
-                <Text style={styles.recordText}>
-                    {isRecordingProof ? "Recording..." : "Hold to Record"}
-                </Text>
+                    <Ionicons name={isRecordingProof ? "radio-button-on" : "mic"} size={32} color={isRecordingProof ? "#fff" : PRIMARY_COLOR} />
+                    <Text style={[styles.recordText, isRecordingProof && { color: "#fff" }]}>
+                        {isRecordingProof ? "Recording..." : "Hold to Record"}
+                    </Text>
                 </TouchableOpacity>
-            ) : (
+             ) : (
                 <View style={styles.audioPreview}>
-                    <Text>✅ Audio Recorded</Text>
+                    <View style={styles.audioInfo}>
+                        <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                        <Text style={styles.audioText}>Audio Recorded</Text>
+                    </View>
                     <TouchableOpacity onPress={playRecording} style={styles.playBtn}>
-                        <Text style={{color:'white'}}>▶ Play</Text>
+                        <Ionicons name="play" size={16} color="#fff" />
+                        <Text style={styles.playText}>Play</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setAudioUri(null)} style={styles.deleteBtn}>
+                        <Ionicons name="trash-outline" size={16} color="#EF4444" />
                     </TouchableOpacity>
                 </View>
-            )}
+             )}
           </View>
 
-          {/* SUBMIT */}
-          <TouchableOpacity style={styles.submitBtn} onPress={submitReport} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Submit Report 🛡️</Text>}
-          </TouchableOpacity>
+          {/* SUBMIT BUTTON */}
+          <View style={{marginTop: 20}}>
+              <TouchableOpacity 
+                style={[styles.submitBtn, loading && { opacity: 0.7 }]} 
+                onPress={submitReport} 
+                disabled={loading}
+              >
+                {loading ? (
+                    <ActivityIndicator color="#fff" />
+                ) : (
+                    <>
+                        <Text style={styles.submitText}>Submit Report</Text>
+                        <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    </>
+                )}
+              </TouchableOpacity>
+              
+              <TouchableOpacity onPress={() => router.back()} style={styles.cancelLink}>
+                  <Text style={styles.cancelText}>Cancel Report</Text>
+              </TouchableOpacity>
+          </View>
 
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* FOOTER STATUS */}
-      <View style={styles.footer}>
-         <Text style={styles.footerText}>{statusText}</Text>
-         {listening && (
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <Text>🎤</Text>
-            </Animated.View>
-         )}
+      {/* --- FLOATING STATUS (FIXED) --- */}
+      <View style={styles.floatingContainer} collapsable={false}>
+         <View style={styles.statusPill}>
+             {/* Use opacity to hide/show instead of removing element to prevent crash */}
+             <View style={[styles.statusDot, { opacity: listening ? 1 : 0 }]} />
+             <Text style={styles.footerText} numberOfLines={1}>{statusText}</Text>
+         </View>
+         
+         <TouchableOpacity 
+            onPress={() => startWizardStep(currentStep)}
+            style={styles.micButton}
+            activeOpacity={0.9}
+         >
+             {/* CRASH FIX: Always render Animated.View, just animate scale */}
+             <Animated.View style={{ transform: [{ scale: listening ? pulseAnim : 1 }] }}>
+                 <Ionicons name={listening ? "mic" : "refresh"} size={24} color="#fff" />
+             </Animated.View>
+         </TouchableOpacity>
       </View>
 
     </SafeAreaView>
@@ -358,47 +437,108 @@ export default function ReportScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFF5F5" },
-  content: { padding: 20, paddingBottom: 60 },
-  headerTitle: { fontSize: 24, fontWeight: "bold", color: "#C0392B", marginBottom: 5 },
-  headerSub: { fontSize: 14, color: "#555", marginBottom: 25 },
+  container: { flex: 1, backgroundColor: BG_COLOR },
   
-  section: { marginBottom: 20, padding: 10, borderRadius: 10 },
-  activeSection: { backgroundColor: "#fff", borderWidth: 2, borderColor: "#C0392B" },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingVertical: 16,
+    backgroundColor: "#fff",
+  },
+  headerTitle: { fontSize: 18, fontWeight: "700", color: TEXT_COLOR },
+  backBtn: { padding: 4 },
+  
+  progressTrack: { height: 4, backgroundColor: "#E5E7EB", width: '100%' },
+  progressBar: { height: '100%', backgroundColor: PRIMARY_COLOR },
 
-  label: { fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 10 },
-  
+  content: { padding: 24, paddingBottom: 100 },
+  stepTitle: { fontSize: 22, fontWeight: "800", color: TEXT_COLOR, marginBottom: 24 },
+
+  card: {
+    backgroundColor: CARD_BG,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 10, elevation: 2,
+    borderWidth: 1, borderColor: "transparent"
+  },
+  activeCard: {
+    borderColor: PRIMARY_COLOR,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.1
+  },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
+  cardLabel: { fontSize: 13, fontWeight: "700", color: "#6B7280", textTransform: "uppercase" },
+
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  catButton: { padding: 10, borderRadius: 20, borderWidth: 1, borderColor: "#C0392B", backgroundColor: "white" },
-  catButtonSelected: { backgroundColor: "#C0392B" },
-  catText: { color: "#C0392B", fontWeight: "600" },
-  catTextSelected: { color: "white" },
+  chip: {
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1, borderColor: "transparent"
+  },
+  chipSelected: { backgroundColor: ACTIVE_BG, borderColor: PRIMARY_COLOR },
+  chipText: { fontSize: 14, color: "#4B5563", fontWeight: "600" },
+  chipTextSelected: { color: PRIMARY_COLOR },
+
+  textArea: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: TEXT_COLOR,
+    minHeight: 100,
+    borderWidth: 1, borderColor: "#E5E7EB"
+  },
 
   recordBtn: { 
-    backgroundColor: "#FFEBEE", padding: 15, borderRadius: 15, alignItems: 'center', 
-    borderWidth: 2, borderColor: "#ffcdd2", borderStyle: 'dashed' 
+    backgroundColor: ACTIVE_BG, 
+    padding: 20, borderRadius: 16, 
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: "#FECACA", borderStyle: 'dashed',
+    gap: 8
   },
-  recordBtnActive: { backgroundColor: "#ffcdd2", borderColor: "#C0392B", borderStyle: 'solid' },
-  recordIcon: { fontSize: 24 },
-  recordText: { color: "#C0392B", fontWeight: "600" },
+  recordBtnActive: { 
+    backgroundColor: PRIMARY_COLOR, borderColor: PRIMARY_COLOR, borderStyle: 'solid' 
+  },
+  recordText: { color: PRIMARY_COLOR, fontWeight: "700", fontSize: 14 },
   
-  audioPreview: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, backgroundColor: 'white', borderRadius: 8 },
-  playBtn: { backgroundColor: "#2980b9", padding: 8, borderRadius: 5 },
-
-  textArea: { 
-    backgroundColor: "white", borderRadius: 10, padding: 15, fontSize: 16, 
-    borderWidth: 1, borderColor: "#ddd", height: 100
+  audioPreview: { 
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    padding: 12, backgroundColor: "#F0FDF4", borderRadius: 12, borderWidth: 1, borderColor: "#BBF7D0"
   },
+  audioInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  audioText: { color: "#065F46", fontWeight: "600", fontSize: 14 },
+  playBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: "#10B981", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  playText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  deleteBtn: { padding: 8 },
+
   submitBtn: {
-    backgroundColor: "#C0392B", padding: 18, borderRadius: 12, alignItems: "center",
-    shadowColor: "#000", shadowOpacity: 0.2, elevation: 5, marginTop: 10
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: PRIMARY_COLOR,
+    padding: 18, borderRadius: 16,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.3, shadowRadius: 10, elevation: 4
   },
-  submitText: { color: "white", fontSize: 18, fontWeight: "bold" },
+  submitText: { color: "white", fontSize: 16, fontWeight: "700" },
+  cancelLink: { alignItems: 'center', marginTop: 16 },
+  cancelText: { color: "#6B7280", fontSize: 14, fontWeight: "500" },
 
-  footer: {
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#eee',
-      padding: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center'
+  floatingContainer: {
+      position: 'absolute', bottom: 30, left: 24, right: 24,
+      flexDirection: 'row', alignItems: 'center', gap: 12
   },
-  footerText: { marginRight: 10, color: '#555' }
+  statusPill: {
+      flex: 1, flexDirection: 'row', alignItems: 'center',
+      backgroundColor: "rgba(31, 41, 55, 0.95)",
+      paddingHorizontal: 16, paddingVertical: 14,
+      borderRadius: 30,
+      shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 10, elevation: 5
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#EF4444", marginRight: 10 },
+  footerText: { fontSize: 14, color: "#fff", fontWeight: "600" },
+  
+  micButton: {
+      width: 52, height: 52, borderRadius: 26, 
+      backgroundColor: PRIMARY_COLOR,
+      justifyContent: 'center', alignItems: 'center',
+      shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, elevation: 6
+  }
 });

@@ -20,9 +20,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/icon.png"
       },
       "package": "com.victor1282.VoiceVotingApp2",
       "permissions": [
@@ -34,7 +32,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
       "expo-router",
@@ -56,12 +54,6 @@
         "expo-image-picker",
         {
           "photosPermission": "The app accesses your photos to let you upload candidate images."
-        }
-      ],
-      [
-        "@react-native-voice/voice",
-        {
-          "microphonePermission": "Allow VoiceVotingApp to access your microphone for voting."
         }
       ],
       "expo-speech-recognition",

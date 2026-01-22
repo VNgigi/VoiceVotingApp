@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Speech from "expo-speech";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
@@ -5,11 +6,14 @@ import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -17,6 +21,13 @@ import {
   View
 } from "react-native";
 import { auth, db } from "../firebaseConfig";
+
+// --- THEME ---
+const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
+const BG_COLOR = "#F9FAFB"; // Slate 50
+const TEXT_COLOR = "#1F2937"; // Gray 800
+const INPUT_BG = "#FFFFFF"; 
+const ACTIVE_BG = "#EEF2FF"; // Indigo 50
 
 export default function Signup() {
   const router = useRouter();
@@ -33,8 +44,8 @@ export default function Signup() {
   const [step, setStep] = useState(0); // 0=Intro, 1=Name, 2=RegNo, 3=Dept, 4=Email, 5=Password(Manual)
   const [listening, setListening] = useState(false);
   const [statusText, setStatusText] = useState("Initializing...");
-  const [tempInput, setTempInput] = useState(""); // Stores text while waiting for "Yes/No" confirmation
-  const [isConfirming, setIsConfirming] = useState(false); // Are we waiting for Yes/No?
+  const [tempInput, setTempInput] = useState(""); 
+  const [isConfirming, setIsConfirming] = useState(false); 
   
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -79,11 +90,11 @@ export default function Signup() {
 
     let prompt = "";
     switch(stepNum) {
-        case 1: prompt = "Welcome to signup page. You may require sighted assistance to initially sign you up, especially for your password. Step 1. Please say your Full Name."; break;
+        case 1: prompt = "Welcome. Step 1. Please say your Full Name."; break;
         case 2: prompt = "Step 2. Please say your Registration Number."; break;
         case 3: prompt = "Step 3. Which Department are you in?"; break;
         case 4: prompt = "Step 4. Please say your Email Address."; break;
-        case 5: prompt = "Step 5. For security, please type your password manually. Then press Sign Up."; break;
+        case 5: prompt = "Step 5. For security, please type your password manually."; break;
     }
 
     Speech.speak(prompt, {
@@ -116,7 +127,7 @@ export default function Signup() {
   useSpeechRecognitionEvent("result", (event) => {
     const text = event.results[0]?.transcript;
     if (text) {
-        if(listening) setStatusText(`Heard: "${text}"`);
+        if(listening) setStatusText(`"${text}"`);
         if (event.isFinal) {
             handleVoiceInput(text);
         }
@@ -127,19 +138,16 @@ export default function Signup() {
     const cmd = text.toLowerCase();
     stopEverything();
 
-    // Global Cancel
     if (cmd.includes("cancel") || cmd.includes("stop")) {
         router.back();
         return;
     }
 
-    // A. IF CONFIRMING ("Did you say X?")
+    // A. IF CONFIRMING
     if (isConfirming) {
         if (cmd.includes("yes") || cmd.includes("correct") || cmd.includes("yeah")) {
-            // SAVE DATA AND MOVE NEXT
             saveDataAndNext(step, tempInput);
         } else {
-            // RETRY
             Speech.speak("Okay, let's try that again.", {
                 onDone: () => startWizardStep(step)
             });
@@ -149,17 +157,13 @@ export default function Signup() {
 
     // B. IF CAPTURING INPUT
     let cleanedText = text;
-    
-    // Special cleanup for Email
     if (step === 4) {
         cleanedText = text.replace(/ /g, "").replace(/at/g, "@").replace(/dot/g, ".").toLowerCase();
     }
-    // Special cleanup for Reg No (Upper case, remove spaces)
     if (step === 2) {
         cleanedText = text.replace(/ /g, "").toUpperCase();
     }
 
-    // Ask for confirmation
     setTempInput(cleanedText);
     setIsConfirming(true);
     
@@ -218,139 +222,237 @@ export default function Signup() {
     }
   };
 
+  // Progress Bar Calc
+  const progress = (step / 5) * 100;
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContainer}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        showsVerticalScrollIndicator={false}
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      
+      {/* --- HEADER --- */}
+      <View style={styles.header}>
+         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color={TEXT_COLOR} />
+         </TouchableOpacity>
+         <Text style={styles.headerTitle}>Create Account</Text>
+         <View style={{width: 24}} /> 
+      </View>
+
+      {/* --- PROGRESS BAR --- */}
+      <View style={styles.progressTrack}>
+         <Animated.View style={[styles.progressBar, { width: `${progress}%` }]} />
+      </View>
+
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <View style={styles.innerContainer}>
-          <Text style={styles.title}>Create an Account</Text>
-          <Text style={styles.statusText}>{statusText}</Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.formContainer}>
+            <Text style={styles.sectionTitle}>Student Details</Text>
 
-          {/* NAME */}
-          <View style={[styles.fieldContainer, step === 1 && styles.activeField]}>
-            <TextInput
-                style={styles.input}
-                placeholder="Full Name"
-                value={step === 1 && isConfirming ? tempInput : fullName}
-                onChangeText={setFullName}
-            />
+            {/* NAME */}
+            <View style={[styles.inputWrapper, step === 1 && styles.activeWrapper]}>
+                <Ionicons name="person-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Full Name</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Mary Njoki"
+                        value={step === 1 && isConfirming ? tempInput : fullName}
+                        onChangeText={setFullName}
+                    />
+                </View>
+            </View>
+
+            {/* REG NO */}
+            <View style={[styles.inputWrapper, step === 2 && styles.activeWrapper]}>
+                <Ionicons name="card-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Registration Number</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="C025-01-0001/2022"
+                        value={step === 2 && isConfirming ? tempInput : regNumber}
+                        onChangeText={setRegNumber}
+                        autoCapitalize="characters"
+                    />
+                </View>
+            </View>
+
+            {/* DEPT */}
+            <View style={[styles.inputWrapper, step === 3 && styles.activeWrapper]}>
+                <Ionicons name="business-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Department</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Computer Science"
+                        value={step === 3 && isConfirming ? tempInput : department}
+                        onChangeText={setDepartment}
+                    />
+                </View>
+            </View>
+
+            {/* EMAIL */}
+            <View style={[styles.inputWrapper, step === 4 && styles.activeWrapper]}>
+                <Ionicons name="mail-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="student@example.com"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={step === 4 && isConfirming ? tempInput : email}
+                        onChangeText={setEmail}
+                    />
+                </View>
+            </View>
+
+            {/* PASSWORD */}
+            <View style={[styles.inputWrapper, step === 5 && styles.activeWrapper]}>
+                <Ionicons name="lock-closed-outline" size={20} color="#6B7280" style={styles.icon} />
+                <View style={{flex: 1}}>
+                    <Text style={styles.label}>Password</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="••••••••"
+                        secureTextEntry
+                        value={password}
+                        onChangeText={setPassword}
+                    />
+                </View>
+            </View>
+
+            {/* ACTION BUTTONS */}
+            <TouchableOpacity
+                style={[styles.button, loading && {opacity: 0.7}]}
+                onPress={handleSignup}
+                disabled={loading}
+            >
+                {loading ? (
+                    <ActivityIndicator color="#fff" />
+                ) : (
+                    <>
+                         <Text style={styles.buttonText}>Create Account</Text>
+                         <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    </>
+                )}
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => router.push("/login")} style={styles.linkContainer}>
+                <Text style={styles.linkText}>
+                    Already have an account? <Text style={styles.linkHighlight}>Log in</Text>
+                </Text>
+            </TouchableOpacity>
           </View>
+          <View style={{height: 100}} />
+        </ScrollView>
+      </KeyboardAvoidingView>
 
-          {/* REG NO */}
-          <View style={[styles.fieldContainer, step === 2 && styles.activeField]}>
-            <TextInput
-                style={styles.input}
-                placeholder="Registration Number"
-                value={step === 2 && isConfirming ? tempInput : regNumber}
-                onChangeText={setRegNumber}
-                autoCapitalize="characters"
-            />
-          </View>
+      {/* --- FLOATING STATUS --- */}
+      <View style={styles.floatingContainer}>
+         <View style={styles.statusPill}>
+             <View style={[styles.statusDot, { opacity: listening ? 1 : 0 }]} />
+             <Text style={styles.footerText} numberOfLines={1}>{statusText}</Text>
+         </View>
+         
+         <TouchableOpacity 
+            onPress={() => startWizardStep(step)}
+            style={styles.micButton}
+            activeOpacity={0.9}
+         >
+             <Animated.View style={{ transform: [{ scale: listening ? pulseAnim : 1 }] }}>
+                 <Ionicons name={listening ? "mic" : "refresh"} size={24} color="#fff" />
+             </Animated.View>
+         </TouchableOpacity>
+      </View>
 
-          {/* DEPT */}
-          <View style={[styles.fieldContainer, step === 3 && styles.activeField]}>
-            <TextInput
-                style={styles.input}
-                placeholder="Department"
-                value={step === 3 && isConfirming ? tempInput : department}
-                onChangeText={setDepartment}
-            />
-          </View>
-
-          {/* EMAIL */}
-          <View style={[styles.fieldContainer, step === 4 && styles.activeField]}>
-            <TextInput
-                style={styles.input}
-                placeholder="Email Address"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={step === 4 && isConfirming ? tempInput : email}
-                onChangeText={setEmail}
-            />
-          </View>
-
-          {/* PASSWORD */}
-          <View style={[styles.fieldContainer, step === 5 && styles.activeField]}>
-            <TextInput
-                style={styles.input}
-                placeholder="Password (Type manually)"
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-            />
-          </View>
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleSignup}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? "Creating Account..." : "Sign Up"}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => router.push("/login")} style={styles.linkContainer}>
-            <Text style={styles.linkText}>Already have an account? Log in</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-
-      {/* FLOATING MIC */}
-      {listening && (
-        <View style={styles.footer}>
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <Text style={{fontSize: 30}}>🎤</Text>
-            </Animated.View>
-        </View>
-      )}
-
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f8f9fa" },
-  scrollContainer: { flexGrow: 1, justifyContent: "center" },
-  innerContainer: { alignItems: "center", padding: 20, width: "100%" },
-  title: { fontSize: 26, fontWeight: "bold", marginBottom: 20, color: "#333" },
-  statusText: { fontSize: 14, fontStyle: "italic", color: "#666", marginBottom: 15 },
+  container: { flex: 1, backgroundColor: BG_COLOR },
   
-  fieldContainer: { width: "100%", maxWidth: 350, marginBottom: 15 },
-  activeField: { borderColor: "#007AFF", borderWidth: 2, borderRadius: 12, padding: 2, backgroundColor: "#E3F2FD" },
-
-  input: {
-    width: "100%",
+  // HEADER
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingVertical: 16,
     backgroundColor: "#fff",
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    color: "#333",
   },
-  button: {
-    backgroundColor: "#007AFF",
-    padding: 16,
-    borderRadius: 10,
-    width: "100%",
-    maxWidth: 350,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  buttonText: { color: "white", fontSize: 16, fontWeight: "600" },
-  linkContainer: { marginTop: 15, padding: 10 },
-  linkText: { color: "#007AFF", fontSize: 15 },
+  headerTitle: { fontSize: 18, fontWeight: "700", color: TEXT_COLOR },
+  backBtn: { padding: 4 },
   
-  footer: {
-      position: 'absolute', bottom: 30, alignSelf: 'center',
-      backgroundColor: 'white', padding: 15, borderRadius: 30,
-      elevation: 5, shadowColor: '#000', shadowOpacity: 0.2
+  // PROGRESS
+  progressTrack: { height: 4, backgroundColor: "#E5E7EB", width: '100%' },
+  progressBar: { height: '100%', backgroundColor: PRIMARY_COLOR },
+
+  scrollContent: { padding: 24 },
+  formContainer: { width: "100%", gap: 16 },
+  sectionTitle: { fontSize: 20, fontWeight: "800", color: TEXT_COLOR, marginBottom: 8 },
+
+  // INPUT WRAPPER
+  inputWrapper: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: INPUT_BG,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1, borderColor: "#E5E7EB",
+    shadowColor: "#000", shadowOpacity: 0.02, shadowRadius: 5, elevation: 1
+  },
+  activeWrapper: {
+    borderColor: PRIMARY_COLOR,
+    backgroundColor: ACTIVE_BG,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.1, shadowRadius: 8
+  },
+  icon: { marginRight: 12 },
+  label: { fontSize: 11, color: "#6B7280", fontWeight: "600", marginBottom: 2, textTransform: 'uppercase' },
+  input: {
+      fontSize: 16,
+      color: TEXT_COLOR,
+      padding: 0,
+      height: 24,
+  },
+
+  // BUTTONS
+  button: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: PRIMARY_COLOR,
+    padding: 18, borderRadius: 16,
+    marginTop: 16,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.3, shadowRadius: 10, elevation: 4
+  },
+  buttonText: { color: "white", fontSize: 16, fontWeight: "700" },
+  
+  linkContainer: { alignItems: 'center', marginTop: 16 },
+  linkText: { color: "#6B7280", fontSize: 14 },
+  linkHighlight: { color: PRIMARY_COLOR, fontWeight: "700" },
+  
+  // FLOATING STATUS
+  floatingContainer: {
+      position: 'absolute', bottom: 30, left: 24, right: 24,
+      flexDirection: 'row', alignItems: 'center', gap: 12
+  },
+  statusPill: {
+      flex: 1, flexDirection: 'row', alignItems: 'center',
+      backgroundColor: "rgba(31, 41, 55, 0.95)",
+      paddingHorizontal: 16, paddingVertical: 14,
+      borderRadius: 30,
+      shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 10, elevation: 5
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#EF4444", marginRight: 10 },
+  footerText: { fontSize: 14, color: "#fff", fontWeight: "600" },
+  
+  micButton: {
+      width: 52, height: 52, borderRadius: 26, 
+      backgroundColor: PRIMARY_COLOR,
+      justifyContent: 'center', alignItems: 'center',
+      shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, elevation: 6
   }
 });

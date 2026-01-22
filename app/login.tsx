@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons"; // Modern Icons
 import * as LocalAuthentication from "expo-local-authentication";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
@@ -11,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +22,9 @@ import {
 import { auth } from "../firebaseConfig";
 
 const ADMIN_EMAIL = "ngigi.vick82@gmail.com"; 
+const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
+const BG_COLOR = "#F9FAFB"; // Slate 50
+const TEXT_COLOR = "#1F2937"; // Gray 800
 
 export default function Login() {
   const router = useRouter();
@@ -86,7 +91,7 @@ export default function Login() {
     if (stepNum === 1) {
         Speech.speak("Login Page. Please say your Email, or say 'Fingerprint' to log in securely.", {
             onDone: () => {
-                setStatusText("Listening... (Say Email or Fingerprint)");
+                setStatusText("Say Email or 'Fingerprint'");
                 startListening();
             }
         });
@@ -117,7 +122,7 @@ export default function Login() {
   useSpeechRecognitionEvent("result", (event) => {
     const text = event.results[0]?.transcript;
     if (text) {
-        if(listening && step === 1) setStatusText(`Heard: "${text}"`);
+        if(listening && step === 1) setStatusText(`"${text}"`);
         if (event.isFinal) {
             handleVoiceInput(text);
         }
@@ -171,7 +176,7 @@ export default function Login() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       
-      // SUCCESS: Save credentials for next time!
+      // SUCCESS: Save credentials
       if (isBiometricSupported) {
           await SecureStore.setItemAsync("user_email", email);
           await SecureStore.setItemAsync("user_pass", password);
@@ -235,75 +240,108 @@ export default function Login() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
+      <StatusBar barStyle="dark-content" backgroundColor={BG_COLOR} />
+      
       <ScrollView
         contentContainerStyle={styles.scrollContainer}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag" 
+        showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.title}>Welcome Back</Text>
-        <Text style={styles.statusText}>{statusText}</Text>
-
-        {/* EMAIL INPUT */}
-        <View style={[styles.inputContainer, step === 1 && styles.activeInput]}>
-            <Text style={styles.label}>Email Address</Text>
-            <TextInput
-            style={styles.input}
-            placeholder="example@gmail.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-            />
+        {/* --- HEADER --- */}
+        <View style={styles.header}>
+            <View style={styles.iconCircle}>
+                <Ionicons name="lock-closed-outline" size={40} color={PRIMARY_COLOR} />
+            </View>
+            <Text style={styles.title}>Welcome Back</Text>
+            <Text style={styles.subtitle}>Sign in to access your dashboard</Text>
         </View>
 
-        {/* PASSWORD INPUT */}
-        <View style={[styles.inputContainer, step === 2 && styles.activeInput]}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-            style={styles.input}
-            placeholder="********"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            />
+        {/* --- STATUS PILL (Voice) --- */}
+        <View style={[styles.statusPill, listening && styles.statusPillActive]}>
+             <View style={[styles.statusDot, listening && styles.statusDotActive]} />
+             <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
         </View>
 
-        {/* BIOMETRIC BUTTON (If Supported) */}
-        {isBiometricSupported && (
+        {/* --- INPUTS --- */}
+        <View style={styles.formContainer}>
+            {/* EMAIL */}
+            <View style={[styles.inputWrapper, step === 1 && styles.activeInput]}>
+                <Ionicons name="mail-outline" size={20} color="#9CA3AF" style={styles.inputIcon} />
+                <View style={styles.inputContent}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="name@example.com"
+                        placeholderTextColor="#9CA3AF"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={email}
+                        onChangeText={setEmail}
+                    />
+                </View>
+            </View>
+
+            {/* PASSWORD */}
+            <View style={[styles.inputWrapper, step === 2 && styles.activeInput]}>
+                <Ionicons name="key-outline" size={20} color="#9CA3AF" style={styles.inputIcon} />
+                <View style={styles.inputContent}>
+                    <Text style={styles.label}>Password</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="••••••••"
+                        placeholderTextColor="#9CA3AF"
+                        secureTextEntry
+                        value={password}
+                        onChangeText={setPassword}
+                    />
+                </View>
+            </View>
+        </View>
+
+        {/* --- BIOMETRIC & ACTION --- */}
+        <View style={styles.actionContainer}>
+            {isBiometricSupported && (
+                <TouchableOpacity 
+                    style={styles.bioButton} 
+                    onPress={handleBiometricLogin}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="finger-print" size={24} color={PRIMARY_COLOR} />
+                    <Text style={styles.bioText}>Use Biometrics</Text>
+                </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
-                style={styles.bioButton} 
-                onPress={handleBiometricLogin}
+                style={[styles.button, loading && styles.buttonDisabled]} 
+                onPress={handleLogin} 
+                disabled={loading}
+                activeOpacity={0.8}
             >
-                <Text style={styles.bioText}>👆 Login with Fingerprint</Text>
+                <Text style={styles.buttonText}>
+                    {loading ? "Verifying..." : "Sign In"}
+                </Text>
+                {!loading && <Ionicons name="arrow-forward" size={20} color="#fff" />}
             </TouchableOpacity>
-        )}
 
-        {/* LOGIN BUTTON */}
-        <TouchableOpacity 
-          style={styles.button} 
-          onPress={handleLogin} 
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>
-            {loading ? "Logging in..." : "Log In"}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => router.push("/signup")}>
-          <Text style={styles.linkText}>Don’t have an account? Sign up</Text>
-        </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push("/signup")} style={styles.linkButton}>
+                <Text style={styles.linkText}>
+                    New here? <Text style={styles.linkHighlight}>Create an account</Text>
+                </Text>
+            </TouchableOpacity>
+        </View>
 
       </ScrollView>
 
-      {/* FLOATING STATUS */}
+      {/* --- FLOATING MIC INDICATOR --- */}
       {listening && (
-        <View style={styles.footer}>
+        <View style={styles.floatingMic}>
             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <Text style={{fontSize: 30}}>🎤</Text>
+                <View style={styles.micCircle}>
+                    <Ionicons name="mic" size={24} color="#fff" />
+                </View>
             </Animated.View>
-            <Text style={{marginLeft: 10, color: '#555'}}>Listening...</Text>
         </View>
       )}
 
@@ -312,84 +350,98 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f8f9fa",
-  },
+  container: { flex: 1, backgroundColor: BG_COLOR },
   scrollContainer: {
     flexGrow: 1, 
     justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
+    padding: 24,
+    paddingTop: 60
   },
-  title: {
-    fontSize: 26,
-    fontWeight: "bold",
-    marginBottom: 20,
+  
+  // HEADER
+  header: { alignItems: 'center', marginBottom: 32 },
+  iconCircle: {
+      width: 80, height: 80, borderRadius: 40,
+      backgroundColor: "#EEF2FF", // Light Indigo
+      justifyContent: 'center', alignItems: 'center',
+      marginBottom: 24,
+      borderWidth: 1, borderColor: "#E0E7FF"
   },
-  statusText: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 20,
-    fontStyle: 'italic'
+  title: { fontSize: 28, fontWeight: "800", color: TEXT_COLOR, letterSpacing: -0.5 },
+  subtitle: { fontSize: 15, color: "#6B7280", marginTop: 8 },
+
+  // STATUS
+  statusPill: {
+      flexDirection: 'row', alignItems: 'center', alignSelf: 'center',
+      backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 8,
+      borderRadius: 20, marginBottom: 24,
+      borderWidth: 1, borderColor: "#E5E7EB",
+      shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 4, elevation: 1
   },
-  inputContainer: {
-      width: "100%", maxWidth: 350, marginBottom: 15
-  },
-  label: {
-      marginBottom: 5, fontWeight: 'bold', color: '#333'
+  statusPillActive: { borderColor: PRIMARY_COLOR, backgroundColor: "#F5F3FF" },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#D1D5DB", marginRight: 8 },
+  statusDotActive: { backgroundColor: "#EF4444" },
+  statusText: { fontSize: 13, color: "#6B7280", fontWeight: "600", maxWidth: 200 },
+
+  // FORM
+  formContainer: { width: "100%", gap: 16, marginBottom: 32 },
+  inputWrapper: {
+      flexDirection: 'row', alignItems: 'center',
+      backgroundColor: "#fff",
+      borderRadius: 16,
+      padding: 12,
+      borderWidth: 1, borderColor: "#E5E7EB",
+      shadowColor: "#000", shadowOpacity: 0.02, shadowRadius: 5, elevation: 1
   },
   activeInput: {
-      borderColor: "#007AFF", borderWidth: 1, borderRadius: 12, padding: 5, backgroundColor: "#E3F2FD"
+      borderColor: PRIMARY_COLOR,
+      backgroundColor: "#EEF2FF",
+      shadowColor: PRIMARY_COLOR, shadowOpacity: 0.1, shadowRadius: 8
   },
+  inputIcon: { marginRight: 12, marginLeft: 4 },
+  inputContent: { flex: 1 },
+  label: { fontSize: 12, color: "#6B7280", fontWeight: "600", marginBottom: 2, textTransform: 'uppercase' },
   input: {
-    backgroundColor: "#fff",
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    width: "100%",
-  },
-  button: {
-    backgroundColor: "#007AFF",
-    padding: 16,
-    borderRadius: 10,
-    width: "100%",
-    maxWidth: 350,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  // Biometric Button Styles
-  bioButton: {
-      backgroundColor: "#fff",
-      borderWidth: 1,
-      borderColor: "#28a745",
-      padding: 14,
-      borderRadius: 10,
-      width: "100%",
-      maxWidth: 350,
-      alignItems: "center",
-      marginBottom: 10,
-  },
-  bioText: {
-      color: "#28a745",
       fontSize: 16,
-      fontWeight: "bold"
+      color: TEXT_COLOR,
+      paddingVertical: 2, // Tighten up
+      height: 24,
+      padding: 0
   },
-  linkText: {
-    marginTop: 15,
-    color: "#007AFF",
-    fontSize: 15,
+
+  // ACTIONS
+  actionContainer: { width: "100%", gap: 16 },
+  bioButton: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+      backgroundColor: "#fff",
+      padding: 16, borderRadius: 16,
+      borderWidth: 1, borderColor: "#E0E7FF"
   },
-  footer: {
-      position: 'absolute', bottom: 30, alignSelf: 'center',
-      flexDirection: 'row', alignItems: 'center',
-      backgroundColor: 'white', padding: 15, borderRadius: 30,
-      elevation: 5, shadowColor: '#000', shadowOpacity: 0.2
+  bioText: { color: PRIMARY_COLOR, fontWeight: "700", fontSize: 15 },
+  
+  button: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: PRIMARY_COLOR,
+    padding: 18, borderRadius: 16,
+    shadowColor: PRIMARY_COLOR, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: {width: 0, height: 4},
+    elevation: 4
+  },
+  buttonDisabled: { opacity: 0.7 },
+  buttonText: { color: "white", fontSize: 16, fontWeight: "700" },
+  
+  linkButton: { alignItems: 'center', marginTop: 8 },
+  linkText: { color: "#6B7280", fontSize: 14 },
+  linkHighlight: { color: PRIMARY_COLOR, fontWeight: "700" },
+
+  // FLOATING MIC
+  floatingMic: {
+      position: 'absolute', bottom: 40, right: 30,
+      alignItems: 'center', justifyContent: 'center'
+  },
+  micCircle: {
+      width: 56, height: 56, borderRadius: 28,
+      backgroundColor: "#EF4444",
+      justifyContent: 'center', alignItems: 'center',
+      shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, elevation: 6
   }
 });
