@@ -18,12 +18,12 @@ import {
 } from "react-native";
 import { db } from "../firebaseConfig";
 
-// --- THEME CONSTANTS ---
-const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
-const SECONDARY_COLOR = "#10B981"; // Emerald 500 (Winner)
-const BG_COLOR = "#F9FAFB"; // Slate 50
-const TEXT_COLOR = "#1F2937"; // Gray 800
-const BAR_BG = "#E5E7EB"; // Gray 200
+// --- THEME Colours ---
+const PRIMARY_COLOR = "#4F46E5"; 
+const SECONDARY_COLOR = "#10B981"; 
+const BG_COLOR = "#F9FAFB"; 
+const TEXT_COLOR = "#1F2937"; 
+const BAR_BG = "#E5E7EB"; 
 
 // --- SORT ORDER ---
 const POSITION_ORDER = [
@@ -66,7 +66,7 @@ export default function Results() {
     };
   }, []);
 
-  // --- ANIMATION ---
+  // --- ANIMATION (Crash Proof) ---
   useEffect(() => {
     if (listening) {
       Animated.loop(
@@ -76,6 +76,8 @@ export default function Results() {
         ])
       ).start();
     } else {
+      //  Stop animation before resetting
+      pulseAnim.stopAnimation();
       pulseAnim.setValue(1);
     }
   }, [listening]);
@@ -286,7 +288,6 @@ export default function Results() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[PRIMARY_COLOR]} />
         }
         renderItem={({ item }) => {
-            // Calculate total votes for percentage visualization
             const totalVotes = item.candidates.reduce((sum, c) => sum + c.votes, 0);
 
             return (
@@ -314,7 +315,6 @@ export default function Results() {
                                 </Text>
                              </View>
                              
-                             {/* VISUAL BAR */}
                              <View style={styles.progressBarBg}>
                                  <View style={[
                                      styles.progressBarFill, 
@@ -335,8 +335,9 @@ export default function Results() {
         }}
       />
 
-      {/* --- FLOATING STATUS & MIC --- */}
-      <View style={styles.floatingContainer}>
+      {/* --- FLOATING STATUS & MIC  --- */}
+      {/* */}
+      <View style={styles.floatingContainer} collapsable={false}>
          <View style={styles.statusPill}>
              <View style={[styles.statusDot, listening && styles.statusDotActive]} />
              <Text style={styles.footerText} numberOfLines={1}>{statusText}</Text>
@@ -347,6 +348,7 @@ export default function Results() {
              style={[styles.micButton, listening && styles.micActive]}
              activeOpacity={0.8}
          >
+             {/*  */}
              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
                 <Ionicons name={listening ? "mic" : "mic-off"} size={24} color="#fff" />
              </Animated.View>

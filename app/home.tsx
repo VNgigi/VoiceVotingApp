@@ -216,7 +216,7 @@ export default function Home() {
         >
             <View style={styles.heroContent}>
                 <View style={styles.heroIconBox}>
-                    <Ionicons name="finger-print" size={32} color="#fff" />
+                    <Ionicons name="checkmark" size={32} color="#fff" />
                 </View>
                 <View>
                     <Text style={styles.heroTitle}>Start Voting</Text>

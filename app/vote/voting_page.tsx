@@ -46,8 +46,8 @@ interface ElectionPosition {
 }
 
 const { width } = Dimensions.get('window');
-const ACTIVE_COLOR = "#4F46E5"; // Indigo 600
-const BG_COLOR = "#F9FAFB"; // Slate 50
+const ACTIVE_COLOR = "#4F46E5"; 
+const BG_COLOR = "#F9FAFB"; 
 
 export default function VotingScreen() {
   const router = useRouter();

@@ -9,28 +9,28 @@ import { addDoc, collection } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  Dimensions,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Alert,
+    Animated,
+    Dimensions,
+    Image,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { db, storage } from "../../firebaseConfig";
 
 // --- THEME ---
-const PRIMARY_COLOR = "#4F46E5"; // Indigo 600
-const BG_COLOR = "#F9FAFB"; // Slate 50
-const TEXT_COLOR = "#1F2937"; // Gray 800
-const INPUT_BG = "#F3F4F6"; // Gray 100
-const ACTIVE_BG = "#EEF2FF"; // Indigo 50
+const PRIMARY_COLOR = "#4F46E5";
+const BG_COLOR = "#F9FAFB";
+const TEXT_COLOR = "#1F2937";
+const INPUT_BG = "#F3F4F6";
+const ACTIVE_BG = "#EEF2FF";
 
 const { width } = Dimensions.get("window");
 
@@ -54,7 +54,7 @@ export default function CandidateApplication() {
   const [loading, setLoading] = useState(false);
 
   // --- VOICE STATE ---
-  const [currentStep, setCurrentStep] = useState(0); // 0 = Intro
+  const [currentStep, setCurrentStep] = useState(0); 
   const [listening, setListening] = useState(false);
   const [statusText, setStatusText] = useState("Initializing...");
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -99,17 +99,20 @@ export default function CandidateApplication() {
     let prompt = "";
 
     switch(step) {
-        case 1: prompt = "Application started. Step 1. Please say your Full Name."; break;
+        case 1: 
+            // UPDATED: Added Voice Disclaimer here
+            prompt = "Welcome to the application wizard. Important: For the photo and document upload steps, please ensure you are assisted by a trusted sighted person to verify the correct files are selected. Step 1. Please say your Full Name."; 
+            break;
         case 2: prompt = "Step 2. Say the position you are running for."; break;
         case 3: prompt = "Step 3. Say your Admission Number."; break;
         case 4: prompt = "Step 4. Say your Age."; break;
         case 5: prompt = "Step 5. Say your Course or Department."; break;
         case 6: prompt = "Step 6. Say your Email Address."; break;
         case 7: 
-            prompt = "Step 7. Photo Upload. Tap the camera icon to select a photo. Say Next when done."; 
+            prompt = "Step 7. Photo Upload. Ask your assistant to tap the camera icon to select a photo. Say Next when done."; 
             break;
         case 8: 
-            prompt = "Step 8. Document Upload. Tap the button to select your eligibility PDF. Say Next when done."; 
+            prompt = "Step 8. Document Upload. Ask your assistant to tap the button to select your eligibility PDF. Say Next when done."; 
             break;
         case 9: prompt = "Step 9. Say a brief manifesto about yourself."; break;
         case 10: prompt = "Application complete. Say Submit to finish, or Cancel to exit."; break;
@@ -213,7 +216,7 @@ export default function CandidateApplication() {
                     startWizardStep(8);
                 }
             } else {
-                Speech.speak("Tap the camera icon, then say Next.", { onDone: () => {startListening(); } });
+                Speech.speak("Please select a photo first, then say Next.", { onDone: () => {startListening(); } });
             }
             break;
         case 8: // Doc
@@ -341,6 +344,15 @@ export default function CandidateApplication() {
       </View>
       
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        
+        {/* NEW: VISUAL DISCLAIMER */}
+        <View style={styles.warningCard}>
+            <Ionicons name="people" size={20} color="#B45309" />
+            <Text style={styles.warningText}>
+                Trusted assistant required for photo and document selection.
+            </Text>
+        </View>
+
         <Text style={styles.sectionTitle}>Candidate Details</Text>
         
         {/* --- 1. PHOTO UPLOAD (Hero) --- */}
@@ -473,24 +485,33 @@ export default function CandidateApplication() {
         <View style={{height: 120}} /> 
       </ScrollView>
 
-      {/* --- FLOATING STATUS BAR --- */}
+      {/* --- FLOATING STATUS BAR (WITH CRASH FIX) --- */}
       <View style={styles.floatingContainer}>
          <View style={styles.statusPill}>
-             {listening && <View style={styles.statusDot} />}
+             {/* CRASH FIX: Do not unmount this view. Toggle width/opacity instead */}
+             <View style={[styles.statusDot, !listening && { width: 0, height: 0, margin: 0, opacity: 0 }]} />
              <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
          </View>
          
          <TouchableOpacity 
-            onPress={() => startWizardStep(currentStep)}
-            style={styles.micButton}
+           onPress={() => startWizardStep(currentStep)}
+           style={styles.micButton}
          >
-             {listening ? (
-                 <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                     <Ionicons name="mic" size={24} color="#fff" />
-                 </Animated.View>
-             ) : (
+             {/* CRASH FIX: Stack icons, do not unmount them */}
+             <Animated.View style={[
+                 { position: 'absolute' },
+                 { transform: [{ scale: pulseAnim }] },
+                 !listening && { opacity: 0 } 
+             ]}>
+                 <Ionicons name="mic" size={24} color="#fff" />
+             </Animated.View>
+
+             <View style={[
+                 { position: 'absolute' },
+                 listening && { opacity: 0 }
+             ]}>
                 <Ionicons name="refresh" size={24} color="#fff" />
-             )}
+             </View>
          </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -515,6 +536,14 @@ const styles = StyleSheet.create({
 
   scrollContent: { padding: 24 },
   sectionTitle: { fontSize: 18, fontWeight: "700", color: TEXT_COLOR, marginBottom: 20 },
+
+  // WARNING CARD (NEW)
+  warningCard: {
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      backgroundColor: '#FEF3C7', padding: 12, borderRadius: 8, marginBottom: 20,
+      borderWidth: 1, borderColor: '#F59E0B'
+  },
+  warningText: { color: '#92400E', fontSize: 13, flex: 1, fontWeight: '500' },
 
   // PHOTO UPLOAD
   photoContainer: { alignItems: 'center', marginBottom: 32 },

@@ -241,10 +241,13 @@ export default function Contestants() {
     const cmd = text.toLowerCase();
     stopEverything();
 
-    // A. Navigation
+    // A. Navigation ( Explicitly replace to Home)
     if (cmd.includes("back") || cmd.includes("return") || cmd.includes("home")) {
-        Speech.speak("Going back.", {
-            onDone: () => { router.back(); }
+        Speech.speak("Going back to home.", {
+            onDone: () => { 
+                // @ts-ignore
+                router.navigate("/home"); 
+            }
         });
         return;
     } 
@@ -335,7 +338,7 @@ export default function Contestants() {
                
                {item.briefInfo && (
                   <View style={styles.badge}>
-                     <Text style={styles.badgeText} numberOfLines={1}>{item.briefInfo}</Text>
+                      <Text style={styles.badgeText} numberOfLines={1}>{item.briefInfo}</Text>
                   </View>
                )}
                

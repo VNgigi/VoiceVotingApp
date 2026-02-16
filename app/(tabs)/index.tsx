@@ -155,7 +155,7 @@ export default function Index() {
           {/* HERO SECTION */}
           <View style={styles.heroSection}>
               <View style={styles.iconCircle}>
-                <Ionicons name="finger-print-outline" size={64} color={PRIMARY_COLOR} />
+                <Ionicons name="mic-outline" size={64} color={PRIMARY_COLOR} />
               </View>
               <Text style={styles.title}>Voice Vote</Text>
               <Text style={styles.subtitle}>Secure, Accessible, Modern.</Text>

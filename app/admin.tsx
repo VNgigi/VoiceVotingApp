@@ -1,4 +1,4 @@
-import { Audio } from "expo-av"; // 1. Import Audio
+import { Audio } from "expo-av";
 import {
   addDoc,
   collection,
@@ -6,8 +6,7 @@ import {
   doc,
   onSnapshot,
   orderBy,
-  query,
-  setDoc
+  query
 } from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
@@ -20,7 +19,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import { db } from "./../firebaseConfig"; // Check your path
+import { db } from "./../firebaseConfig";
 
 // --- TYPES ---
 interface Candidate {
@@ -31,6 +30,7 @@ interface Candidate {
   photoUrl?: string;
   documentUrl?: string;
   briefInfo?: string;
+  votes: number;
   [key: string]: any;
 }
 
@@ -38,7 +38,7 @@ interface Incident {
   id: string;
   category: string;
   description: string;
-  audioUrl?: string; // Voice note URL
+  audioUrl?: string;
   timestamp: any;
 }
 
@@ -48,41 +48,73 @@ export default function Admin() {
   // Data State
   const [contestants, setContestants] = useState<Candidate[]>([]);
   const [applications, setApplications] = useState<Candidate[]>([]);
-  const [incidents, setIncidents] = useState<Incident[]>([]); // New State
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   
-  const [resultsPublished, setResultsPublished] = useState(false);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
 
   useEffect(() => {
-    // 1. Fetch Approved Candidates
-    const unsubContestants = onSnapshot(collection(db, "contestants"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Candidate));
-      setContestants(data.sort((a, b) => a.position.localeCompare(b.position)));
+    // --- 1. FETCH CANDIDATES & MERGE WITH VOTES ---
+    // We listen to "contestants" to get profiles, AND "votes" to get counts.
+    
+    const unsubContestants = onSnapshot(collection(db, "contestants"), (cSnapshot) => {
+        // A. Get Static Candidate Data (Profiles)
+        const rawCandidates = cSnapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data(), 
+            votes: 0 // Default to 0
+        } as Candidate));
+
+        // B. Listen to "votes" collection to fill in the numbers
+        const unsubVotes = onSnapshot(collection(db, "votes"), (vSnapshot) => {
+            // Create a lookup map: { "Position_Name": Count }
+            const voteMap: Record<string, number> = {};
+
+            vSnapshot.docs.forEach(voteDoc => {
+                const position = voteDoc.id; // e.g. "President"
+                const data = voteDoc.data(); // { "John Doe": 10, "Jane": 5 }
+                
+                Object.entries(data).forEach(([name, count]) => {
+                    // Create a unique key combining Position + Name
+                    voteMap[`${position}_${name}`] = count as number;
+                });
+            });
+
+            // C. Merge Counts into Candidates
+            const finalCandidates = rawCandidates.map(c => ({
+                ...c,
+                // Look up vote count using the key we created
+                votes: voteMap[`${c.position}_${c.name}`] || 0
+            }));
+
+            // D. Sort: By Position, then by Vote Count (Highest first)
+            finalCandidates.sort((a, b) => {
+                if (a.position === b.position) return b.votes - a.votes;
+                return a.position.localeCompare(b.position);
+            });
+
+            setContestants(finalCandidates);
+        });
+
+        return () => unsubVotes();
     });
 
-    // 2. Fetch Pending Applications
+    // --- 2. FETCH PENDING APPLICATIONS ---
     const unsubApplications = onSnapshot(collection(db, "applications"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Candidate));
       setApplications(data);
     });
 
-    // 3. Fetch Incident Reports (New)
+    // --- 3. FETCH INCIDENTS ---
     const qIncidents = query(collection(db, "incidents"), orderBy("timestamp", "desc"));
     const unsubIncidents = onSnapshot(qIncidents, (snapshot) => {
         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
         setIncidents(data);
     });
 
-    // 4. Fetch Settings
-    const unsubSettings = onSnapshot(doc(db, "settings", "election"), (doc) => {
-      if (doc.exists()) setResultsPublished(doc.data().resultsPublished);
-    });
-
     return () => { 
-        unsubContestants(); 
+        unsubContestants();
         unsubApplications(); 
         unsubIncidents();
-        unsubSettings(); 
         if (sound) sound.unloadAsync();
     };
   }, []);
@@ -92,7 +124,8 @@ export default function Admin() {
   const handleApprove = async (app: Candidate) => {
     try {
       const { id, ...candidateData } = app; 
-      await addDoc(collection(db, "contestants"), { ...candidateData, votes: 0, approvedAt: new Date().toISOString() });
+      // Note: We don't initialize votes here anymore because they live in the "votes" collection
+      await addDoc(collection(db, "contestants"), { ...candidateData, approvedAt: new Date().toISOString() });
       await deleteDoc(doc(db, "applications", app.id));
       Alert.alert("Approved", `${app.name} added to ballot.`);
     } catch (e) { Alert.alert("Error", "Could not approve."); }
@@ -112,10 +145,9 @@ export default function Admin() {
     ]);
   };
 
-  // --- REPORT ACTIONS ---
   const playAudio = async (url: string) => {
       try {
-          if (sound) await sound.unloadAsync(); // Stop previous
+          if (sound) await sound.unloadAsync();
           const { sound: newSound } = await Audio.Sound.createAsync({ uri: url });
           setSound(newSound);
           await newSound.playAsync();
@@ -125,19 +157,24 @@ export default function Admin() {
   };
 
   const resolveIncident = async (id: string) => {
-      Alert.alert("Resolve Incident", "Mark as resolved and delete from list?", [
+      Alert.alert("Resolve Incident", "Mark as resolved and delete?", [
           { text: "Cancel" },
           { text: "Resolve", onPress: async () => await deleteDoc(doc(db, "incidents", id)) }
       ]);
   };
 
-  const toggleResults = async () => {
-    await setDoc(doc(db, "settings", "election"), { resultsPublished: !resultsPublished }, { merge: true });
-  };
-
   const openDocument = (url?: string) => {
     if (url) Linking.openURL(url).catch(() => Alert.alert("Error", "Bad URL"));
     else Alert.alert("No File", "No document attached.");
+  };
+
+  const getGroupedResults = () => {
+      const groups: Record<string, Candidate[]> = {};
+      contestants.forEach(c => {
+          if (!groups[c.position]) groups[c.position] = [];
+          groups[c.position].push(c);
+      });
+      return groups;
   };
 
   return (
@@ -149,14 +186,17 @@ export default function Admin() {
       {/* TABS */}
       <View style={styles.tabContainer}>
         <TouchableOpacity style={[styles.tab, activeTab === "candidates" && styles.activeTab]} onPress={() => setActiveTab("candidates")}>
-          <Text style={[styles.tabText, activeTab === "candidates" && styles.activeTabText]}>Ballot ({contestants.length})</Text>
+          <Text style={[styles.tabText, activeTab === "candidates" && styles.activeTabText]}>Ballot (Candidates)</Text>
         </TouchableOpacity>
         
         <TouchableOpacity style={[styles.tab, activeTab === "applications" && styles.activeTab]} onPress={() => setActiveTab("applications")}>
           <Text style={[styles.tabText, activeTab === "applications" && styles.activeTabText]}>Pending ({applications.length})</Text>
         </TouchableOpacity>
 
-        {/* NEW TAB: REPORTS */}
+        <TouchableOpacity style={[styles.tab, activeTab === "results" && styles.activeTab]} onPress={() => setActiveTab("results")}>
+          <Text style={[styles.tabText, activeTab === "results" && styles.activeTabText]}>Results</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={[styles.tab, activeTab === "reports" && styles.activeTab]} onPress={() => setActiveTab("reports")}>
           <Text style={[styles.tabText, activeTab === "reports" && styles.activeTabText]}>Reports ({incidents.length})</Text>
         </TouchableOpacity>
@@ -210,7 +250,37 @@ export default function Admin() {
           </View>
         )}
 
-        {/* VIEW 3: INCIDENT REPORTS (NEW) */}
+        {/* VIEW 3: LIVE RESULTS */}
+        {activeTab === "results" && (
+            <View>
+                <Text style={styles.sectionTitle}>📊 Live Vote Counts</Text>
+                {Object.entries(getGroupedResults()).map(([position, candidates]) => {
+                    const totalVotes = candidates.reduce((sum, c) => sum + (c.votes || 0), 0);
+                    
+                    return (
+                        <View key={position} style={styles.resultGroup}>
+                            <Text style={styles.resultHeader}>{position}</Text>
+                            {candidates.map((c) => {
+                                const percent = totalVotes > 0 ? ((c.votes || 0) / totalVotes) * 100 : 0;
+                                return (
+                                    <View key={c.id} style={styles.resultRow}>
+                                        <View style={styles.resultInfo}>
+                                            <Text style={styles.resultName}>{c.name}</Text>
+                                            <Text style={styles.resultCount}>{c.votes || 0} votes</Text>
+                                        </View>
+                                        <View style={styles.progressBarBg}>
+                                            <View style={[styles.progressBarFill, { width: `${percent}%` }]} />
+                                        </View>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    );
+                })}
+            </View>
+        )}
+
+        {/* VIEW 4: INCIDENT REPORTS */}
         {activeTab === "reports" && (
             <View>
                 {incidents.map((inc) => (
@@ -224,7 +294,6 @@ export default function Admin() {
                         
                         <Text style={styles.reportDesc}>{inc.description}</Text>
                         
-                        {/* Audio Player */}
                         {inc.audioUrl && (
                             <TouchableOpacity style={styles.audioBtn} onPress={() => playAudio(inc.audioUrl!)}>
                                 <Text style={styles.audioText}>▶ Play Voice Evidence</Text>
@@ -241,16 +310,6 @@ export default function Admin() {
         )}
 
       </ScrollView>
-
-      {/* PUBLISH BUTTON */}
-      <TouchableOpacity 
-        style={[styles.publishBtn, { backgroundColor: resultsPublished ? "#d9534f" : "#1E6BB8" }]}
-        onPress={toggleResults}
-      >
-        <Text style={styles.publishText}>
-          {resultsPublished ? "🚫 Unpublish Results" : "📢 Publish Results"}
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -268,6 +327,7 @@ const styles = StyleSheet.create({
   
   scrollContent: { padding: 15, paddingBottom: 100 },
   emptyText: { textAlign: 'center', marginTop: 40, color: '#999' },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20, color: '#2D3748' },
 
   // Cards
   card: { backgroundColor: 'white', padding: 15, borderRadius: 12, marginBottom: 15, elevation: 2 },
@@ -285,12 +345,23 @@ const styles = StyleSheet.create({
   rejectBtn: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ccc' },
   btnText: { color: 'white', fontWeight: 'bold' },
 
+  // Ballot Rows
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: 15, borderRadius: 10, marginBottom: 10 },
   rowName: { fontSize: 16, fontWeight: 'bold' },
   rowPos: { fontSize: 13, color: '#666' },
   deleteText: { color: '#d9534f', fontWeight: 'bold' },
 
-  // REPORT STYLES (NEW)
+  // RESULTS STYLES
+  resultGroup: { backgroundColor: 'white', padding: 15, borderRadius: 10, marginBottom: 15, elevation: 1 },
+  resultHeader: { fontSize: 16, fontWeight: 'bold', color: '#1E6BB8', marginBottom: 10, textTransform: 'uppercase' },
+  resultRow: { marginBottom: 12 },
+  resultInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+  resultName: { fontSize: 14, fontWeight: '600', color: '#333' },
+  resultCount: { fontSize: 14, fontWeight: 'bold', color: '#28a745' },
+  progressBarBg: { height: 8, backgroundColor: '#E2E8F0', borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', backgroundColor: '#48BB78', borderRadius: 4 },
+
+  // REPORT STYLES
   reportCard: { backgroundColor: '#FFF5F5', padding: 15, borderRadius: 10, marginBottom: 15, borderLeftWidth: 5, borderLeftColor: '#C0392B', elevation: 2 },
   reportHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   reportCategory: { fontWeight: 'bold', color: '#C0392B', fontSize: 16 },
@@ -302,7 +373,4 @@ const styles = StyleSheet.create({
   
   resolveBtn: { alignSelf: 'flex-end', padding: 5 },
   resolveText: { color: '#888', textDecorationLine: 'underline', fontSize: 12 },
-
-  publishBtn: { position: "absolute", bottom: 30, left: 20, right: 20, padding: 18, borderRadius: 15, alignItems: "center", elevation: 8 },
-  publishText: { color: "white", fontSize: 16, fontWeight: "bold" }
 });
